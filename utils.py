@@ -81,6 +81,5 @@ def std_dev_of_return(data, window):
     # Step 5: Take the square root to get standard deviation
     std_dev = variance ** 0.5
 
-    # No annualization step here, as you didn't specify it in your steps, but it can be added if needed
     return std_dev
 

@@ -12,22 +12,22 @@ def inverted_yield_curve_alpha(date, data_dict):
     tlt_data = data_dict['TLT'].loc[:date]
 
     # Current prices (assuming the last price in the dataset is the current price)
-    current_price_spy = spy_data['Open'].iloc[-1]
-    current_price_tqqq = tqqq_data['Open'].iloc[-1]
+    current_price_spy = spy_data['Close'].iloc[-1]
+    current_price_tqqq = tqqq_data['Close'].iloc[-1]
 
     # Calculating indicators
-    spy_200d_ma = moving_average(spy_data['Open'], 200).iloc[-1]
-    tqqq_10d_rsi = relative_strength_idx(tqqq_data['Open'], 10).iloc[-1]
-    spxl_10d_rsi = relative_strength_idx(spxl_data['Open'], 10).iloc[-1]
-    qqq_5d_cum_return = cumulative_return(qqq_data['Open'], 5)
-    tqqq_1d_cum_return = cumulative_return(tqqq_data['Open'], 1)
-    qqq_10d_rsi = relative_strength_idx(qqq_data['Open'], 10).iloc[-1]
-    tqqq_10d_std_dev = std_dev_of_return(tqqq_data['Open'], 10)
-    tqqq_20d_ma = moving_average(tqqq_data['Open'], 20).iloc[-1]
-    sqqq_10d_rsi = relative_strength_idx(sqqq_data['Open'], 10).iloc[-1]
-    spy_10d_rsi = relative_strength_idx(spy_data['Open'], 10).iloc[-1]
-    uvxy_10d_rsi = relative_strength_idx(uvxy_data['Open'], 10).iloc[-1]
-    tlt_10d_rsi = relative_strength_idx(tlt_data['Open'], 10).iloc[-1]
+    spy_200d_ma = moving_average(spy_data['Close'], 200).iloc[-1]
+    tqqq_10d_rsi = relative_strength_idx(tqqq_data['Close'], 10).iloc[-1]
+    spxl_10d_rsi = relative_strength_idx(spxl_data['Close'], 10).iloc[-1]
+    qqq_5d_cum_return = cumulative_return(qqq_data['Close'], 5)
+    tqqq_1d_cum_return = cumulative_return(tqqq_data['Close'], 1)
+    qqq_10d_rsi = relative_strength_idx(qqq_data['Close'], 10).iloc[-1]
+    tqqq_10d_std_dev = std_dev_of_return(tqqq_data['Close'], 10)
+    tqqq_20d_ma = moving_average(tqqq_data['Close'], 20).iloc[-1]
+    sqqq_10d_rsi = relative_strength_idx(sqqq_data['Close'], 10).iloc[-1]
+    spy_10d_rsi = relative_strength_idx(spy_data['Close'], 10).iloc[-1]
+    uvxy_10d_rsi = relative_strength_idx(uvxy_data['Close'], 10).iloc[-1]
+    tlt_10d_rsi = relative_strength_idx(tlt_data['Close'], 10).iloc[-1]
 
     # Decision tree
     print_log(f'Is current price of SPY ({current_price_spy}) greater than 200-day moving average ({spy_200d_ma})? ')

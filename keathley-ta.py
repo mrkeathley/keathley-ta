@@ -32,31 +32,48 @@ def evaluate_tickers_over_period(data_dict, scheme):
     return results
 
 
-def calculate_daily_return(open_price, close_price):
-    """Calculate the daily return from open to close price."""
-    return (close_price - open_price) / open_price
+def calculate_daily_return(previous_close, current_close):
+    """Calculate the daily return based on the previous day's close and the current day's close."""
+    return (current_close - previous_close) / previous_close
 
 
 def backtest_strategy(results, data_dict, starting_account_value):
     account_value = starting_account_value
     account_values = [account_value]
+    previous_close_prices = {}  # To store the previous close price for each ticker
+    last_date_used = {}  # To store the last date a ticker was used
 
     for date, ticker in results:
-        # Check if the date exists in the data_dict for the ticker
+        current_date = pd.to_datetime(date)
+
+        # Check if ticker needs re-initialization (first occurrence or more than 3 days old)
+        if ticker not in last_date_used or (current_date - last_date_used[ticker]).days > 3:
+            # Find the most recent close price strictly before this date
+            recent_data_prior = data_dict[ticker].loc[:date].iloc[:-1]  # Exclude the current date
+            if not recent_data_prior.empty:
+                previous_close_prices[ticker] = recent_data_prior['Close'].iloc[-1]
+            else:
+                # If there's absolutely no data before this date, skip this ticker for now
+                continue
+
         if date in data_dict[ticker].index:
-            open_price = data_dict[ticker].loc[date, 'Open']
             close_price = data_dict[ticker].loc[date, 'Close']
+            previous_close = previous_close_prices[ticker]
 
-            # Calculate the day's return
-            daily_return = calculate_daily_return(open_price, close_price)
+            # Calculate the day's return based on the previous close
+            daily_return = (close_price - previous_close) / previous_close
 
-            print_log(f"Date: {date}, Ticker: {ticker}, Daily Return: {daily_return:.2%}")
+            print_log(f"Date: {date}, Ticker: {ticker}, Previous: {previous_close}, Close: {close_price}, Daily Return: {daily_return:.2%}")
 
-            # Update account value
+            # Update the account value
             account_value *= (1 + daily_return)
+
+            # Update tracking information
+            previous_close_prices[ticker] = close_price
+            last_date_used[ticker] = current_date
         else:
-            # If the date is not available, use the previous day's return (effectively 0% return for this day)
-            print_log(f"Data for {date} not available for {ticker}, assuming 0% return for this day.")
+            # If the date is not available (e.g., weekend), assume 0% return for this day
+            print(f"Data for {date} not available for {ticker}, assuming 0% return for this day.")
 
         account_values.append(account_value)
 
@@ -78,9 +95,9 @@ def execute(start_date, end_date, scheme, starting_account_value = 5000):
 
 
 if __name__ == '__main__':
-    starting_account_value = 5000
+    starting_account_value = 10000
     end_date = datetime.datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=1095)).strftime('%Y-%m-%d')
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=(365*3)+1)).strftime('%Y-%m-%d')
     execute(start_date, end_date, inverted_yield_curve_alpha, starting_account_value)
 
 
