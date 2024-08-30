@@ -1,0 +1,14 @@
+<nav style="background-color: #f8f9fa;" aria-label="breadcrumb">
+    <div class="container">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'stock_list' %}">Home</a></li>
+            <!-- Conditional breadcrumb item if inside a specific category or stock -->
+            {% if category %}
+            <li class="breadcrumb-item"><a href="{% url 'category_stocks' category %}">{{ category }}</a></li>
+            {% endif %}
+            {% if stock %}
+            <li class="breadcrumb-item active" aria-current="page">{{ stock.ticker }}</li>
+            {% endif %}
+        </ol>
+    </div>
+</nav>

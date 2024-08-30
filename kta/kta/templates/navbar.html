@@ -1,0 +1,29 @@
+<!-- Navigation Bar -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="{% url 'stock_list' %}">KTA Valuations</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNavDropdown" aria-controls="navbarNavDropdown" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNavDropdown">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link active" aria-current="page" href="{% url 'stock_list' %}">All Stocks</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="{% url 'undervalued_stock_list' %}">Undervalued Stocks</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="{% url 'undervalued_stock_list' %}">Overvalued Stocks</a>
+                </li>
+            </ul>
+            {% if include_search %}
+                <!-- Search Form within Navbar -->
+                <form class="d-flex" method="get" action="">
+                    <input class="form-control me-2" type="search" placeholder="Search ticker" aria-label="Search ticker" name="q" value="{{ request.GET.q }}">
+                    <button class="btn btn-outline-success" type="submit">Search</button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+</nav>

@@ -2,9 +2,8 @@ import datetime
 
 import pandas as pd
 import yfinance as yf
-from schemes import inverted_yield_curve_alpha
-from graphing import plot_backtest
-from utils import print_log
+from .graphing import plot_backtest
+from logging import info as print_log
 
 
 def create_data(start_date, end_date):
@@ -21,7 +20,7 @@ def create_data(start_date, end_date):
     return data_dict
 
 
-def evaluate_tickers_over_period(data_dict, scheme):
+def evaluate_tickers_over_period(start_date, end_date, data_dict, scheme):
     results = []
     dates = pd.date_range(start=start_date, end=end_date, freq='D')
 
@@ -37,11 +36,16 @@ def calculate_daily_return(previous_close, current_close):
     return (current_close - previous_close) / previous_close
 
 
-def backtest_strategy(results, data_dict, starting_account_value):
+def backtest_strategy(results, data_dict, starting_account_value, holdings_info):
     account_value = starting_account_value
     account_values = [account_value]
     previous_close_prices = {}  # To store the previous close price for each ticker
     last_date_used = {}  # To store the last date a ticker was used
+
+    holdings_metrics = []  # To track holdings metrics
+
+    holding_ticker, shares, purchase_price, purchase_date = holdings_info
+    holdings_value = shares * purchase_price  # Initial value of holdings
 
     for date, ticker in results:
         current_date = pd.to_datetime(date)
@@ -57,6 +61,18 @@ def backtest_strategy(results, data_dict, starting_account_value):
                 continue
 
         if date in data_dict[ticker].index:
+            if date >= purchase_date:
+                current_price = data_dict[ticker].loc[date, 'Close']
+                holdings_value = shares * current_price  # Update value of holdings
+
+            # Calculate growth percent of holdings from purchase
+            growth_percent = ((holdings_value - (shares * purchase_price)) / (shares * purchase_price)) * 100
+
+            # Determine if it's time to sell based on the scheme
+            sell_signal = ticker != holding_ticker  # Assuming a sell signal if the selected ticker is different
+
+            holdings_metrics.append((date, holdings_value, growth_percent, sell_signal))
+
             close_price = data_dict[ticker].loc[date, 'Close']
             previous_close = previous_close_prices[ticker]
 
@@ -77,28 +93,34 @@ def backtest_strategy(results, data_dict, starting_account_value):
 
         account_values.append(account_value)
 
-    return account_values
+    return account_values, holdings_metrics
 
 
-def execute(start_date, end_date, scheme, starting_account_value = 5000):
+def execute(start_date, end_date, scheme):
     # Create a dictionary to store the data for each ticker
     data_dict = create_data(start_date, end_date)
 
     # Evaluate tickers over the specified period
-    results = evaluate_tickers_over_period(data_dict, scheme)
+    results = evaluate_tickers_over_period(start_date, end_date, data_dict, scheme)
 
     # Perform backtesting
-    account_values = backtest_strategy(results, data_dict, starting_account_value)
+    account_values, holdings_metrics = backtest_strategy(results, data_dict, 1000, ('TQQQ', 40, 59.77, datetime.datetime.strptime('2024-03-19', '%Y-%m-%d')))
 
     # Plot the backtest results
     plot_backtest(results, account_values)
 
 
-if __name__ == '__main__':
-    starting_account_value = 10000
-    end_date = datetime.datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=(365*3)+1)).strftime('%Y-%m-%d')
-    execute(start_date, end_date, inverted_yield_curve_alpha, starting_account_value)
+def determine_pick_for_day(date, scheme):
+    # Create a dictionary to store the data for each ticker
+    data_dict = create_data(date, date)
+
+    # Evaluate tickers over the specified period
+    results = evaluate_tickers_over_period(date, date, data_dict, scheme)
+
+    for d, ticker in results:
+        print(f'The ticker for {d} is {ticker}')
+
+
 
 
 

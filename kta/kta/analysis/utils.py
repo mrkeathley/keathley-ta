@@ -1,10 +1,19 @@
 import logging
 import pandas as pd
 import numpy as np
+import requests
+from ..settings import ALPHAVANTAGE_API_KEY
+import csv
+from io import StringIO
 
-def print_log(message):
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info(message)
+
+def get_exchange_assets():
+    url = f"https://www.alphavantage.co/query?function=LISTING_STATUS&apikey={ALPHAVANTAGE_API_KEY}"
+    response = requests.get(url)
+    data = response.content.decode('utf-8')
+    csv_data = StringIO(data)
+    csv_reader = csv.DictReader(csv_data)
+    return [row for row in csv_reader]
 
 
 def moving_average(data, window):

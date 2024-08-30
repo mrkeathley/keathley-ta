@@ -8,6 +8,60 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import logging
 
+def alternate_backtest(results, account_values, holding_metrics):
+    # Assuming `results` and `holding_metrics` have aligned dates after adjustments in backtesting
+    dates, holdings_values, growth_percents, sell_signals = zip(*holding_metrics)
+    dates = [pd.to_datetime(date) for date in dates]  # Ensure dates are in datetime format for plotting
+
+    # Convert dates to numerical format for consistent plotting
+    dates_num = matplotlib.dates.date2num(dates)
+
+    # Start plotting
+    plt.figure(figsize=(14, 10))
+    plt.subplot(2, 1, 1)  # Top plot for the ticker selection and growth percent
+
+    # Plot ticker selections as colored bars
+    _, tickers = zip(*results)  # Unzip the results into separate lists
+    unique_tickers = list(set(tickers))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_tickers)))
+    color_map = dict(zip(unique_tickers, colors))
+
+    for i, ticker in enumerate(tickers):
+        if i < len(dates_num):  # Ensure alignment
+            plt.bar(dates_num[i], 1, width=1, color=color_map[ticker], align='center')
+
+    # Adjustments for x-axis to handle dates
+    plt.gca().xaxis_date()
+    plt.xticks(rotation=45)
+    plt.yticks([])  # Hide the y-axis labels and ticks for the ticker selection
+
+    # Overlay Holdings Growth Percent
+    plt.twinx()
+    plt.plot(dates_num, growth_percents, label='Holdings Growth %', color='purple', linestyle='dotted')
+    plt.legend(loc='upper left')
+    plt.ylabel('Growth %')
+
+    # Indicate Sell Signals
+    for i, sell in enumerate(sell_signals):
+        if sell and i < len(dates_num):  # Ensure alignment
+            plt.axvline(x=dates_num[i], linestyle='--', color='red', alpha=0.5)
+
+    plt.title('Ticker Selection, Holdings Growth, and Sell Signals')
+
+    # No need to use twinx() again since we're plotting on a new subplot for clarity and simplicity
+    plt.subplot(2, 1, 2)  # Bottom plot for account values
+    plt.plot(dates_num, account_values, '-', label='Account Value', color='k')
+    plt.ylabel('Account Value')
+    plt.gca().xaxis_date()  # Ensure x-axis is treated as dates
+    plt.xticks(rotation=45)
+
+    # Legend for account values
+    plt.legend(loc='upper left')
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 def plot_backtest(results, account_values):
     # Calculate the total cumulative return percentage
@@ -68,3 +122,4 @@ def plot_backtest(results, account_values):
     plt.title('Ticker Selection and Account Value Over Time')
     plt.tight_layout()
     plt.show()
+

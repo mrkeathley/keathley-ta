@@ -1,5 +1,5 @@
-from utils import print_log, moving_average, relative_strength_idx, cumulative_return, std_dev_of_return
-
+from .utils import moving_average, relative_strength_idx, cumulative_return, std_dev_of_return
+from logging import info as print_log
 
 # Decision tree for the inverted yield curve alpha strategy
 def inverted_yield_curve_alpha(date, data_dict):

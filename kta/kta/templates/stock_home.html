@@ -1,0 +1,129 @@
+{% load humanize %}
+{% load custom_filters %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stock Valuations</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { padding: 20px; }
+        .table { width: auto; margin: auto; }
+        th, td { text-align: right; }
+        th:first-child, td:first-child { text-align: left; }
+        .highlight { background-color: #f2dede; } /* Highlight for undervalued stocks */
+        .primary-color { background-color: #dff0d8; }
+        .terms-list { list-style-type: none; padding: 0; }
+        .nav-link:hover, .nav-link.active { color: #dff0d8; } /* Hover color for nav links */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation Bar -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="{% url 'stock_list' %}">KTA Valuations</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNavDropdown" aria-controls="navbarNavDropdown" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNavDropdown">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item">
+                            <a class="nav-link active" aria-current="page" href="{% url 'stock_list' %}">All Stocks</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'undervalued_stock_list' %}">Undervalued Stocks</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'undervalued_stock_list' %}">Overvalued Stocks</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+        <nav style="background-color: #f8f9fa;" aria-label="breadcrumb">
+            <div class="container">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a class="nav-link" href="{% url 'stock_list' %}">Home</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{{ stock }}</li>
+                </ol>
+            </div>
+        </nav>
+
+
+        <div class="row mt-3">
+            <div class="col-10">
+                <h4>Valuations</h4>
+                <table class="table table-striped">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Date</th>
+                            <th>Growth Rate (%)</th>
+                            <th>Per Share Value ($)</th>
+                            <th>Current Price ($)</th>
+                            <th>Implied P/E Ratio</th>
+                            <th>P/E Ratio</th>
+                            <th>Current Market Cap (B)</th>
+                            <th>Implied Market Cap (B)</th>
+                            <th>Shares Outstanding (B)</th>
+                            <th>% Company per M Shares</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for valuation in valuations %}
+                        <tr class="{% if valuation.current_price < valuation.per_share_value %}highlight{% endif %} {% if valuation.date == now.date %}today{% endif %}">
+                            <td>{{ valuation.date }}</td>
+                            <td>{{ valuation.growth_rate|multiply:100|floatformat:2 }}%</td>
+                            <td>{{ valuation.per_share_value|floatformat:2|intcomma }}</td>
+                            <td>{{ valuation.current_price|floatformat:2|intcomma }}</td>
+                            <td>{{ valuation.implied_pe_ratio|floatformat:2 }}</td>
+                            <td>{{ valuation.pe_ratio|floatformat:2 }}</td>
+                            <td>{{ valuation.current_market_cap|floatformat:2|intcomma }}</td>
+                            <td>{{ valuation.implied_market_cap|floatformat:2|intcomma }}</td>
+                            <td>{{ valuation.shares_outstanding|floatformat:2|intcomma }}</td>
+                            <td>{{ valuation.normalized_shares_outstanding|floatformat:2 }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <h4 class="mt-4">Growth Estimates</h4>
+                <table class="table table-striped m-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Date</th>
+                            <th>Growth Rate (%)</th>
+                            <th>Historical Rate (%)</th>
+                            <th>Yahoo Estimate (%)</th>
+                            <th>Google Trend Rate (%)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for estimate in growth_estimates %}
+                        <tr>
+                            <td>{{ estimate.date }}</td>
+                            <td>{{ estimate.growth_rate|multiply:100|floatformat:2 }}%</td>
+                            <td>{{ estimate.historical_rate|multiply:100|floatformat:2 }}%</td>
+                            <td>{{ estimate.yahoo_estimate|multiply:100|floatformat:2 }}%</td>
+                            <td>{{ estimate.google_trend_rate|multiply:100|floatformat:2 }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="col-2 primary-color">
+                <h4>Company Terms</h4>
+                <ul class="terms-list">
+                    {% for term in company_terms %}
+                    <li>{{ term.term }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.min.js"></script>
+</body>
+</html>

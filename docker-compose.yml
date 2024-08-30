@@ -1,0 +1,22 @@
+version: '3'
+
+volumes:
+  kta-data:
+
+networks:
+  kta-network:
+    driver: bridge
+
+services:
+  database:
+    image: 'postgres:latest'
+    ports:
+      - 15432:5432
+    environment:
+      POSTGRES_DB: 'kta'
+      POSTGRES_USER: 'kta'
+      POSTGRES_PASSWORD: 'kta_password'
+    networks:
+      - kta-network
+    volumes:
+      - kta-data:/var/lib/postgresql/data/
