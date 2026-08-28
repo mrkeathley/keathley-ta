@@ -1,0 +1,127 @@
+//@version=5
+
+
+
+strategy(title="Keathley Bot v2", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.0, process_orders_on_close=true, calc_on_every_tick=false)
+
+
+
+// Trend filter
+
+longMovingAverageDays  = input.int(title="Long MA Length", defval=200, step=10, group="Strategy", tooltip="Regime/veto filter")
+
+shortMovingAverageDays = input.int(title="Short MA Length", defval=10, step=1, group="Strategy", tooltip="Pullback entry reference")
+
+
+
+// Trailing stop
+
+atrLength       = input.int(title="ATR Length", defval=10, step=1, group="Exit", tooltip="Period for volatility stop")
+
+atrMultiplier   = input.float(title="ATR Multiplier", defval=4.0, step=0.5, group="Exit", tooltip="Wide multiplier preserves winners")
+
+
+
+// Position sizing (volatility targeting)
+
+riskPerTrade    = input.float(title="Risk Per Trade %", defval=1.0, step=0.1, minval=0.1, group="Risk", tooltip="% of equity risked per trade")
+
+
+
+// Signal source
+
+useHeikinAshi   = input.bool(title="Use HeikinAshi candles", defval=false, group="Configuration")
+
+
+
+srcClose = useHeikinAshi ? request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, lookahead=barmerge.lookahead_off) : close
+
+
+
+longMA  = ta.sma(srcClose, longMovingAverageDays)
+
+shortMA = ta.sma(srcClose, shortMovingAverageDays)
+
+
+
+atr          = ta.atr(atrLength) * atrMultiplier
+
+
+
+// Volatility-trailing stop: highest close since entry minus ATR distance
+
+var float highSinceEntry = na
+
+if strategy.position_size > 0
+
+    highSinceEntry := math.max(srcClose, nz(highSinceEntry, srcClose))
+
+else
+
+    highSinceEntry := srcClose
+
+
+
+longStop = highSinceEntry - atr
+
+
+
+// Entry: pullback within an uptrend
+
+trendUp   = srcClose > longMA
+
+pullback  = srcClose < shortMA
+
+longEntry = trendUp and pullback and strategy.position_size == 0
+
+
+
+// Exit: let winners run, ATR trailing stop only
+
+longExit = strategy.position_size > 0 and srcClose < longStop
+
+
+
+// Volatility-targeted position size (risk X% of equity per trade)
+
+riskAmount = strategy.equity * (riskPerTrade / 100.0)
+
+qty        = atr > 0 ? riskAmount / atr : na
+
+
+
+if longEntry
+
+    strategy.entry("Long", strategy.long, qty=qty)
+
+
+
+if longExit
+
+    strategy.close("Long")
+
+
+
+//--- Charting
+
+plot(longMA, color=color.yellow, linewidth=2)
+
+plot(shortMA, color=color.red, linewidth=1, style=plot.style_line)
+
+plot(strategy.position_size > 0 ? longStop : na, title="ATR Trail", color=color.new(color.blue, 0), linewidth=2)
+
+
+
+bgcolor(longEntry ? color.new(color.green, 80) : na)
+
+
+
+plotshape(longEntry, title="Long Entry", style=shape.labelup, location=location.belowbar, color=color.green, text="Buy", textcolor=color.white, size=size.tiny)
+
+plotshape(longExit, title="Long Exit", style=shape.labeldown, location=location.abovebar, color=color.red, text="Sell", textcolor=color.white, size=size.tiny)
+
+
+
+alertcondition(longEntry, title="Long Entry", message="Keathley v2 Long Entry")
+
+alertcondition(longExit, title="Long Exit", message="Keathley v2 Long Exit")
