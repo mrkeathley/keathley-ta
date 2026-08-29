@@ -1,4 +1,5 @@
 .env
+secrets.env
 kta/.env
 .venv/
 .uv-cache/

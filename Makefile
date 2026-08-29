@@ -8,7 +8,7 @@ help:
 	@printf '%s\n' \
 		'Keathley Agentic Trader' \
 		'' \
-		'Set KTA_UNIVERSE in .env before a configured run.' \
+		'Configure a seed universe or enable mandate-driven discovery.' \
 		'' \
 		'  make sync    Install exactly what uv.lock specifies' \
 		'  make lock    Refresh uv.lock after dependency changes' \

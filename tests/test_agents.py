@@ -1,8 +1,12 @@
 import unittest
+from datetime import datetime, timezone
+from decimal import Decimal
 from unittest.mock import patch
 
 from kta.agents import OpenRouterAgentSuite
 from kta.http import ServiceError
+from kta.agents import HeuristicAgentSuite
+from kta.domain import AssetClass, Side, TradeIntent
 
 
 class OpenRouterAgentSuiteTests(unittest.TestCase):
@@ -63,6 +67,25 @@ class OpenRouterAgentSuiteTests(unittest.TestCase):
         self.assertEqual(body["reasoning"], {"effort": "minimal", "exclude": True})
         self.assertEqual(body["max_tokens"], 3000)
         self.assertEqual(body["response_format"]["type"], "json_schema")
+
+
+class HeuristicCriticTests(unittest.TestCase):
+    def test_low_confidence_entry_is_vetoed(self):
+        intent = TradeIntent.create(
+            symbol="TEST",
+            asset_class=AssetClass.EQUITY,
+            side=Side.BUY,
+            signal_as_of=datetime(2026, 8, 28, tzinfo=timezone.utc),
+            strategy_version="test-v1",
+            thesis="weak fixture",
+            confidence=Decimal("0.54"),
+            requested_notional=Decimal("100"),
+            generated_by="fixture",
+        )
+
+        decision = HeuristicAgentSuite().criticize([intent], [], [])[0]
+
+        self.assertFalse(decision.approved)
 
 
 if __name__ == "__main__":

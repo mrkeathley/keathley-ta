@@ -141,6 +141,7 @@ class TradeIntent:
     confidence: Decimal
     requested_notional: Optional[Decimal] = None
     requested_quantity: Optional[Decimal] = None
+    entry_reference_price: Optional[Decimal] = None
     stop_price: Optional[Decimal] = None
     evidence_ids: List[str] = field(default_factory=list)
     generated_by: str = "unknown"
@@ -157,6 +158,7 @@ class TradeIntent:
         confidence: Decimal,
         requested_notional: Optional[Decimal] = None,
         requested_quantity: Optional[Decimal] = None,
+        entry_reference_price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
         evidence_ids: Optional[List[str]] = None,
         generated_by: str = "unknown",
@@ -182,6 +184,9 @@ class TradeIntent:
             confidence=decimal(confidence),
             requested_notional=(decimal(requested_notional) if requested_notional is not None else None),
             requested_quantity=(decimal(requested_quantity) if requested_quantity is not None else None),
+            entry_reference_price=(
+                decimal(entry_reference_price) if entry_reference_price is not None else None
+            ),
             stop_price=(decimal(stop_price) if stop_price is not None else None),
             evidence_ids=list(evidence_ids or []),
             generated_by=generated_by,
@@ -225,6 +230,9 @@ class OrderReceipt:
     side: Side
     status: str
     submitted_at: datetime
+    filled_quantity: Optional[Decimal] = None
+    filled_average_price: Optional[Decimal] = None
+    filled_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)

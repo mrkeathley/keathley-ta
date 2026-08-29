@@ -51,10 +51,14 @@ def command_run(settings: Settings, universe: Optional[str], quiet: bool = False
         settings = replace(settings, universe=symbols)
     if not _validate(settings):
         return 2
+    selected = settings.universe or Journal(settings.database_path).current_universe()
+    if not selected:
+        print(_json({"status": "failed", "errors": ["No generated universe exists yet; run the daemon or queue discovery first."]}))
+        return 2
     reporter = ProgressReporter(enabled=not quiet)
-    reporter.update("Preparing {} run for {} symbol(s)".format(settings.broker_mode, len(settings.universe)))
+    reporter.update("Preparing {} run for {} symbol(s)".format(settings.broker_mode, len(selected)))
     try:
-        result = _build(settings, progress=reporter.update).run(settings.universe)
+        result = _build(settings, progress=reporter.update).run(selected)
     except Exception as error:
         message = "{}: {}".format(type(error).__name__, error)
         reporter.finish("Run could not start — {}".format(message), success=False)
@@ -90,6 +94,7 @@ def command_smoke(settings: Settings, quiet: bool = False) -> int:
             options_enabled=False,
             shorting_enabled=False,
             agentic_research_enabled=False,
+            discovery_enabled=False,
         )
         return command_run(smoke_settings, universe=None, quiet=quiet)
 

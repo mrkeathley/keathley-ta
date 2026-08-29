@@ -17,7 +17,7 @@ storm. Broker submission is separately serialized and retains the existing order
 
 SQLite jobs have leases, attempt counts, exponential retry delays, priorities, and optional deduplication
 keys. A process crash leaves the work recoverable: an expired running lease is returned to the queue. The
-default 30-minute lease is longer than the maximum configured agent loop.
+default four-hour lease allows long investigations while preserving crash recovery.
 
 This is intentionally a **single active container** design. Threads are useful for HTTP responsiveness,
 polling, and I/O-bound jobs; multiple Kubernetes replicas are unsafe while SQLite is the coordinator.
@@ -55,10 +55,21 @@ research, and calls the critic again. Execution checks that the open-session rev
 `KTA_SUGGESTION_REVIEW_TTL_MINUTES` (15 by default), then reruns account/position risk and claims the
 idempotent order ID.
 
+Broker acceptance is not treated as a fill. Nonterminal orders are reconciled by broker order ID, including
+after daemon restart. A confirmed filled entry arms a deterministic below-price protective trigger; exits do
+not require model approval.
+
 Alpaca paper mode uses Alpaca's market clock. Simulation uses a weekday 9:30–16:00 Eastern clock that does
 not model holidays; it must not be treated as an exchange calendar.
 
-## Agentic research
+## Continuous discovery and agentic research
+
+When `KTA_DISCOVERY_ENABLED=true`, the scheduler periodically creates a supervisor task and a child
+discovery task. Perplexity collects current sourced evidence, the discovery model expands the company and
+value-chain graph, and the supervisor model independently accepts or rejects every candidate. Accepted
+symbols must then pass asset identity, tradability, minimum-price, and completed-bar liquidity checks. They
+form an immutable universe snapshot and automatically queue the next scan. Tasks retain progress,
+checkpoints, heartbeats, parent relationships, and operator pause/cancel state in SQLite.
 
 Set all of the following to replace the old single research request with a bounded tool loop:
 
@@ -66,8 +77,8 @@ Set all of the following to replace the old single research request with a bound
 KTA_AGENT_MODE=openrouter
 KTA_RESEARCH_MODE=perplexity
 KTA_AGENTIC_RESEARCH_ENABLED=true
-KTA_AGENT_MAX_TURNS=6
-KTA_AGENT_MAX_RESEARCH_CALLS=4
+KTA_AGENT_MAX_TURNS=64
+KTA_AGENT_MAX_RESEARCH_CALLS=32
 ```
 
 The OpenRouter director can use only three research tools: focused Perplexity search, current context for
@@ -75,8 +86,9 @@ a deterministic candidate, and creation of a validated price trigger for that ca
 research tool before its memo is accepted. It cannot add a symbol, call the broker, edit code, change risk,
 or approve its own trade. OpenRouter and Perplexity usage from every turn is journaled.
 
-The loop is bounded rather than intentionally slow. Duration is a side effect of useful tool calls, not a
-quality metric. Repeated trigger/cooldown checks and the monthly API limit still suppress idle spend.
+The numeric settings are generous emergency loop guards rather than expected research durations. Useful
+work may continue for hours while producing checkpoints. A soft monthly spend threshold emits warnings;
+hard application enforcement is enabled only with `KTA_ENFORCE_MONTHLY_API_BUDGET=true`.
 
 ## Container operation
 

@@ -150,15 +150,16 @@ class AgenticResearchProvider(ResearchProvider):
             raise RuntimeError("Research director returned without using the research tool")
         retrieved = utc_now()
         unique_citations = list(dict.fromkeys(citations))
-        identity = "{}|{}|{}".format(
-            ",".join(sorted(allowed)), "|".join(unique_citations), retrieved.isoformat()
-        )
         return [
             Evidence(
-                evidence_id=sha256(identity.encode("utf-8")).hexdigest()[:24],
-                symbol="*",
+                evidence_id=sha256(
+                    "{}|{}|{}".format(
+                        symbol, "|".join(unique_citations), retrieved.isoformat()
+                    ).encode("utf-8")
+                ).hexdigest()[:24],
+                symbol=symbol,
                 source="agentic-research",
-                title="Multi-turn research packet for {}".format(", ".join(sorted(allowed))),
+                title="Multi-turn research packet containing {}".format(symbol),
                 summary=result.content,
                 url=unique_citations[0] if unique_citations else "",
                 published_at=None,
@@ -167,8 +168,11 @@ class AgenticResearchProvider(ResearchProvider):
                     "model": self.director.model,
                     "turns": result.turns,
                     "research_calls": research_calls,
+                    "symbol": symbol,
+                    "batch_symbols": sorted(allowed),
                     "citations": unique_citations,
                     "tools": [item["tool"] for item in result.tool_calls],
                 },
             )
+            for symbol in sorted(allowed)
         ]

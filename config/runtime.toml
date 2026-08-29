@@ -1,0 +1,23 @@
+[runtime]
+database_path = "var/kta.db"
+discovery_enabled = false
+discovery_interval_hours = 6
+discovery_on_start = true
+scan_after_discovery = true
+discovery_min_price = 2
+discovery_min_daily_dollar_volume = 2000000
+# These are generous emergency loop guards, not normal research targets.
+agent_max_turns = 64
+agent_max_research_calls = 32
+agent_max_tokens_per_turn = 8000
+monthly_api_soft_budget_usd = 100
+
+[models]
+# OpenRouter slugs. Evaluate these by role before enabling paid operation.
+supervisor = "openai/gpt-5.6-terra"
+discovery = "deepseek/deepseek-v4-flash"
+researcher = "openai/gpt-5.6-luna"
+thesis = "openai/gpt-5.6-terra"
+trade = "openai/gpt-5.6-sol"
+critic = "anthropic/claude-fable-5"
+reviewer = "openai/gpt-5.6-sol"

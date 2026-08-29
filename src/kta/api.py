@@ -95,6 +95,28 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     {"triggers": self.server.service.journal.price_triggers(limit)},
                 )
+            elif path == "/v1/agents":
+                self._send(
+                    HTTPStatus.OK,
+                    {"tasks": self.server.service.journal.agent_tasks(limit)},
+                )
+            elif path == "/v1/universe":
+                self._send(
+                    HTTPStatus.OK,
+                    {
+                        "symbols": (
+                            self.server.service.journal.current_universe()
+                            or list(self.server.service.settings.universe)
+                        ),
+                        "candidates": self.server.service.journal.current_universe_candidates(),
+                        "snapshots": self.server.service.journal.universe_snapshots(limit),
+                    },
+                )
+            elif path == "/v1/experiments":
+                self._send(
+                    HTTPStatus.OK,
+                    {"experiments": self.server.service.journal.learning_experiments(limit)},
+                )
             elif path.startswith("/v1/conversations/"):
                 conversation_id = path.split("/")[-1]
                 self._send(
@@ -130,6 +152,17 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
                     cause=str(body.get("cause") or "http"),
                 )
                 self._send(HTTPStatus.ACCEPTED, {"job_id": job_id})
+            elif path == "/v1/discovery":
+                job_id = self.server.service.enqueue_discovery(cause=str(body.get("cause") or "http"))
+                self._send(HTTPStatus.ACCEPTED, {"job_id": job_id})
+            elif path.startswith("/v1/agents/"):
+                task_id = path.split("/")[-1]
+                action = str(body.get("action") or "")
+                if action not in {"pause", "resume", "cancel"}:
+                    raise ValueError("action must be pause, resume, or cancel")
+                status = {"pause": "paused", "resume": "queued", "cancel": "cancelled"}[action]
+                self.server.service.journal.set_agent_task_status(task_id, status)
+                self._send(HTTPStatus.OK, {"task_id": task_id, "status": status})
             elif path == "/v1/triggers":
                 trigger_id = self.server.service.create_price_trigger(
                     str(body["symbol"]),

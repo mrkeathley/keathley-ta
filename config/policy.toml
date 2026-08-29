@@ -1,0 +1,10 @@
+# Protected deterministic execution policy. Models may propose changes but the
+# running service never edits or bypasses this file.
+[risk]
+max_position_pct = 0.40
+max_gross_exposure_pct = 1.00
+max_new_exposure_per_run_pct = 0.60
+max_orders_per_run = 5
+daily_loss_kill_pct = 0.20
+risk_per_trade_pct = 0.01
+minimum_order_notional = 25

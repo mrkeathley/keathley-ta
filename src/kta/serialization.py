@@ -58,6 +58,11 @@ def intent_from_dict(value: Dict[str, Any]) -> TradeIntent:
         requested_quantity=(
             decimal(value["requested_quantity"]) if value.get("requested_quantity") is not None else None
         ),
+        entry_reference_price=(
+            decimal(value["entry_reference_price"])
+            if value.get("entry_reference_price") is not None
+            else None
+        ),
         stop_price=decimal(value["stop_price"]) if value.get("stop_price") is not None else None,
         evidence_ids=[str(item) for item in value.get("evidence_ids") or []],
         generated_by=str(value.get("generated_by") or "unknown"),

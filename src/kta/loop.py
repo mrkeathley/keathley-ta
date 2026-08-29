@@ -17,6 +17,7 @@ from .domain import (
 )
 from .journal import Journal
 from .market import MarketDataProvider
+from .market import completed_daily_bars
 from .research import ResearchProvider
 from .risk import RiskEngine
 from .strategy import TrendPullbackStrategy
@@ -35,8 +36,9 @@ class TradingLoop:
         safe_config: Dict[str, object],
         strategy: Optional[TrendPullbackStrategy] = None,
         decision_cooldown_hours: int = 168,
-        review_min_interval_hours: int = 168,
+        review_min_interval_hours: int = 24,
         monthly_api_budget_usd: Decimal = Decimal("2.00"),
+        enforce_monthly_api_budget: bool = True,
         paid_api_enabled: bool = False,
         defer_execution: bool = False,
         progress: Optional[Callable[[str], None]] = None,
@@ -54,6 +56,7 @@ class TradingLoop:
         self.decision_cooldown_hours = decision_cooldown_hours
         self.review_min_interval_hours = review_min_interval_hours
         self.monthly_api_budget_usd = monthly_api_budget_usd
+        self.enforce_monthly_api_budget = enforce_monthly_api_budget
         self.paid_api_enabled = paid_api_enabled
         self.defer_execution = defer_execution
         self.progress = progress or (lambda message: None)
@@ -107,7 +110,9 @@ class TradingLoop:
             symbol_count = len(scan_symbols)
             for index, symbol in enumerate(scan_symbols, start=1):
                 self._status("Scanning market data {}/{}: {}".format(index, symbol_count, symbol))
-                bars = self.market_data.daily_bars(symbol, 260)
+                bars = completed_daily_bars(
+                    self.market_data.daily_bars(symbol, 261), evaluation_time
+                )[-260:]
                 if not bars:
                     self.journal.event(run_id, "market_data_missing", {"symbol": symbol})
                     if symbol in positions_by_symbol:
@@ -135,7 +140,36 @@ class TradingLoop:
                         "last_bar": bars[-1],
                     },
                 )
-                signal = self.strategy.analyze(bars, positions_by_symbol.get(symbol))
+                position = positions_by_symbol.get(symbol)
+                if isinstance(self.strategy, TrendPullbackStrategy):
+                    trail = self.journal.update_position_trail(
+                        symbol, bars[-1].high, bool(position and position.quantity > 0)
+                    )
+                    signal = self.strategy.analyze(bars, position, trail)
+                    if position and position.quantity > 0:
+                        trailing_stop = self.strategy.trailing_stop(bars, trail)
+                        if trailing_stop is not None and trailing_stop > 0:
+                            trigger_id = self.journal.upsert_protective_stop(
+                                symbol,
+                                trailing_stop,
+                                {
+                                    "kind": "protective_stop",
+                                    "run_id": run_id,
+                                    "strategy_version": self.strategy.version,
+                                    "last_completed_bar": bars[-1].timestamp,
+                                },
+                            )
+                            self.journal.event(
+                                run_id,
+                                "protective_stop_ratcheted",
+                                {
+                                    "trigger_id": trigger_id,
+                                    "symbol": symbol,
+                                    "stop_price": trailing_stop,
+                                },
+                            )
+                else:
+                    signal = self.strategy.analyze(bars, position)
                 if signal:
                     signals.append(signal)
                     self.journal.event(run_id, "signal", signal)
@@ -150,7 +184,11 @@ class TradingLoop:
 
             month_start = evaluation_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             month_cost_before_run = self.journal.api_cost_since(month_start)
-            budget_blocked = self.paid_api_enabled and month_cost_before_run >= self.monthly_api_budget_usd
+            budget_blocked = (
+                self.enforce_monthly_api_budget
+                and self.paid_api_enabled
+                and month_cost_before_run >= self.monthly_api_budget_usd
+            )
             if budget_blocked:
                 entry_count = sum(1 for signal in signals if signal.action == SignalAction.ENTER)
                 signals = [signal for signal in signals if signal.action == SignalAction.EXIT]
@@ -216,13 +254,20 @@ class TradingLoop:
             for item in evidence:
                 self.journal.event(run_id, "evidence", item)
 
-            recent_reviews = self.journal.recent_reviews(limit=3)
+            # Unscored narrative reviews must not recursively persuade the scout.
+            # Mature outcome marks are reviewed by the daemon evaluator instead.
+            recent_reviews: List[Dict[str, object]] = []
             self._status("Scout evaluating {} triggered signal(s)".format(len(signals)))
             intents = self.agents.scout(signals, evidence, account, positions, recent_reviews)
             api_cost_usd += self._capture_usage(run_id, self.agents)
             proposed_count = len(intents)
             for intent in intents:
                 self.journal.event(run_id, "intent_proposed", intent)
+                matching_signal = next(
+                    (signal for signal in signals if signal.symbol == intent.symbol), None
+                )
+                if matching_signal is not None:
+                    self.journal.register_intent_outcomes(run_id, intent, matching_signal.close)
 
             if self.defer_execution:
                 self._status("Queueing {} trade suggestion(s) for independent review".format(len(intents)))
@@ -285,9 +330,11 @@ class TradingLoop:
                 if decision and decision.approved:
                     critic_approved.append(intent)
                     self.journal.event(run_id, "critic_approved", decision)
+                    self.journal.update_intent_disposition(intent.intent_id, "critic_approved")
                 else:
                     payload = decision or {"intent_id": intent.intent_id, "reason": "Missing critic decision"}
                     self.journal.event(run_id, "critic_rejected", payload)
+                    self.journal.update_intent_disposition(intent.intent_id, "critic_rejected")
 
             existing_ids = [intent.intent_id for intent in critic_approved if self.journal.has_order(intent.intent_id)]
             self._status("Applying deterministic risk controls")
@@ -306,8 +353,10 @@ class TradingLoop:
                 decision = risk_by_id[intent.intent_id]
                 if not decision.approved:
                     self.journal.event(run_id, "risk_rejected", decision)
+                    self.journal.update_intent_disposition(intent.intent_id, "risk_rejected")
                     continue
                 self.journal.event(run_id, "risk_approved", decision)
+                self.journal.update_intent_disposition(intent.intent_id, "risk_approved")
                 client_order_id = "kta-{}".format(intent.intent_id)
                 order = OrderRequest(
                     client_order_id=client_order_id,
@@ -335,10 +384,18 @@ class TradingLoop:
                     raise
                 self.journal.update_order(intent.intent_id, receipt.status, receipt)
                 self.journal.event(run_id, "order_submitted", receipt)
+                self.journal.update_intent_disposition(
+                    intent.intent_id,
+                    "filled" if receipt.status == "filled" else "submitted",
+                )
                 submitted_count += 1
 
             last_review_at = self.journal.last_review_at()
-            if self.paid_api_enabled and month_cost_before_run + api_cost_usd >= self.monthly_api_budget_usd:
+            if (
+                self.enforce_monthly_api_budget
+                and self.paid_api_enabled
+                and month_cost_before_run + api_cost_usd >= self.monthly_api_budget_usd
+            ):
                 budget_blocked = True
             review_due = last_review_at is None or (
                 evaluation_time - last_review_at >= timedelta(hours=self.review_min_interval_hours)
@@ -370,7 +427,15 @@ class TradingLoop:
                     review = self.agents.review(review_events, recent_reviews)
                     api_cost_usd += self._capture_usage(run_id, self.agents)
                     self.journal.save_review(run_id, review)
+                    experiment_ids = self.journal.propose_learning_experiments(
+                        run_id, review.suggested_changes
+                    )
                     self.journal.event(run_id, "learning_review", review)
+                    self.journal.event(
+                        run_id,
+                        "learning_experiments_proposed",
+                        {"experiment_ids": experiment_ids},
+                    )
                 except Exception as error:
                     api_cost_usd += self._capture_usage(run_id, self.agents)
                     warning = "Learning review deferred after {}: {}".format(

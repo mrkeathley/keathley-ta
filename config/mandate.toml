@@ -1,0 +1,12 @@
+[mandate]
+# Human-owned direction. Agents use this to discover an investment universe.
+themes = [
+  "AI infrastructure",
+  "power and energy constraints",
+  "data-center cooling and communications",
+  "upstream suppliers and downstream adoption",
+]
+regions = ["US"]
+asset_classes = ["equity", "etf"]
+excluded_industries = []
+time_horizon = "weeks_to_months"

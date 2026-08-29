@@ -136,17 +136,26 @@ class PerplexityResearch(ResearchProvider):
         summary = choices[0].get("message", {}).get("content", "") if choices else ""
         citations = [str(item) for item in (payload.get("citations") or [])]
         retrieved = utc_now()
-        identity = "{}|{}|{}".format(",".join(symbols), "|".join(citations), retrieved.date().isoformat())
         return [
             Evidence(
-                evidence_id=sha256(identity.encode("utf-8")).hexdigest()[:24],
-                symbol="*",
+                evidence_id=sha256(
+                    "{}|{}|{}".format(
+                        symbol, "|".join(citations), retrieved.date().isoformat()
+                    ).encode("utf-8")
+                ).hexdigest()[:24],
+                symbol=symbol,
                 source="perplexity",
-                title="Batched research packet for {}".format(", ".join(symbols)),
+                title="Research packet containing a labeled {} section".format(symbol),
                 summary=summary,
                 url=citations[0] if citations else "",
                 published_at=None,
                 retrieved_at=retrieved,
-                metadata={"model": self.model, "symbols": symbols, "citations": citations},
+                metadata={
+                    "model": self.model,
+                    "symbol": symbol,
+                    "batch_symbols": symbols,
+                    "citations": citations,
+                },
             )
+            for symbol in symbols
         ]

@@ -102,6 +102,26 @@ class RiskEngineTests(unittest.TestCase):
         self.assertTrue(decision.approved)
         self.assertEqual(decision.approved_notional, Decimal("200.00"))
 
+    def test_entry_is_clipped_to_one_percent_equity_at_stop(self):
+        proposal = TradeIntent.create(
+            symbol="TEST5",
+            asset_class=AssetClass.EQUITY,
+            side=Side.BUY,
+            signal_as_of=NOW,
+            strategy_version="test-v1",
+            thesis="test",
+            confidence=Decimal("0.75"),
+            requested_notional=Decimal("1200"),
+            entry_reference_price=Decimal("100"),
+            stop_price=Decimal("90"),
+            generated_by="test",
+        )
+
+        decision = self.engine.evaluate([proposal], self.account, [], [], NOW)[0]
+
+        self.assertTrue(decision.approved)
+        self.assertEqual(decision.approved_notional, Decimal("300.00"))
+
 
 if __name__ == "__main__":
     unittest.main()

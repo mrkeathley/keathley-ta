@@ -9,17 +9,23 @@ Each run records:
 3. Retrieved research and its citations.
 4. Scout intents and independent critic decisions.
 5. Risk decisions, idempotency claims, and broker receipts.
-6. A reviewer report separating observations, hypotheses, and proposed changes.
+6. Counterfactual outcome marks at 1, 5, 20, and 60 completed sessions.
+7. A reviewer report based on mature marks, separating observations, hypotheses, and proposed changes.
 
-The previous three reviews are included in the next scout and reviewer context. Reviews are batched no more than weekly and only after actionable activity. This gives the agents bounded memory without paying for idle narration or allowing them to rewrite executable policy.
+Narrative reviews are not included in the next scout context. The daemon evaluates all proposed intents,
+including critic rejections and risk clips, after the daily scan. When new marks mature, the reviewer runs no
+more than daily. This prevents a persuasive prior review from becoming evidence for its own claims.
 
 ## Why suggestions are not applied yet
 
 A reviewer immediately after submission has no outcome evidence. Automatically applying its suggestion would reward persuasive narration rather than performance. Suggested changes are therefore stored as unpromoted hypotheses.
 
-## Next implementation: counterfactual evaluator
+## Counterfactual evaluator
 
-The evaluator will mark every proposed intent—including rejected ones—at 1, 5, 20, and 60 trading days. It will calculate forward return, maximum favorable excursion, maximum adverse excursion, benchmark-relative return, spread/slippage estimate, and whether the original stop would have triggered.
+The evaluator marks every proposed intent—including rejected ones—at 1, 5, 20, and 60 completed trading
+sessions. It calculates raw and side-adjusted forward return, maximum favorable and adverse excursion,
+whether the original stop would have triggered, and a conservative ten-basis-point round-trip cost estimate.
+Benchmark-relative return and a calibrated symbol-specific spread/slippage model remain future work.
 
 This creates three comparable groups:
 
@@ -31,7 +37,8 @@ Without the rejected groups, the system cannot determine whether a gate adds val
 
 ## Promotion gate
 
-Agent suggestions become versioned shadow candidates. A candidate can replace the promoted policy only when it:
+Agent suggestions remain unpromoted experiments. A future versioned shadow candidate can replace promoted
+policy only when it:
 
 - uses only information available at the historical decision timestamp;
 - is tested with walk-forward splits and transaction costs;
@@ -40,7 +47,8 @@ Agent suggestions become versioned shadow candidates. A candidate can replace th
 - survives a paper-trading observation window;
 - has a reproducible configuration hash and rollback target.
 
-Promotion should be automatic only after these checks are executable code. Agents may propose experiments; deterministic evaluation decides promotion.
+Automatic promotion is still disabled because these gates are not all executable. Agents may propose
+experiments; neither agents nor the reviewer can change the trading policy.
 
 ## Research-quality evaluation
 

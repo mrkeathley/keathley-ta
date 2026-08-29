@@ -30,24 +30,36 @@ writer even then.
 |---|---|---:|---:|
 | Account/position reconciliation | Every trading-day run | No | Daily |
 | Daily-bar scan | About 4:30 p.m. New York time | No | Daily |
+| Universe discovery | Configured interval and on demand | Perplexity + OpenRouter | Every 6 hours |
+| Discovery supervisor | Every discovery snapshot | OpenRouter | One independent review batch |
 | Price-trigger poll/webhook | Price crosses a typed threshold | No | Configured polling/cooldown |
 | Entry research | Actionable entry whose symbol/strategy/action cooldown can be claimed | Perplexity | Once per 168 hours |
-| Research director | Same claimed entry, only when agentic research is enabled | OpenRouter | 1–6 bounded turns |
+| Research director | Same claimed entry, only when agentic research is enabled | OpenRouter | Evidence-based; 64-turn guard |
 | Scout | Same claimed entry batch | OpenRouter | One batch per run |
 | Critic | Scout produced entry intents | OpenRouter | One batch per run |
 | Protective exit | ATR exit for a held position | No | Every run until reconciled |
 | Suggestion critic | Every durable suggestion; again at market open when approved off-hours | OpenRouter | Event-driven |
 | Control chat | User message and remaining monthly budget | OpenRouter | Event-driven |
-| Learning reviewer | Material activity and interval elapsed in one-shot mode | OpenRouter | Once per 168 hours |
+| Outcome evaluator | Daily after the scheduled scan | Market data only | Marks 1/5/20/60-session outcomes |
+| Learning reviewer | New mature outcome marks | OpenRouter | At most once per 24 hours |
 | Outcome marks | 1/5/20/60-session horizon becomes mature | No initially | Daily evaluator, upcoming |
 
-Decision trigger claims use a SQLite transaction and a 30-minute lease. Completed work is suppressed for seven days. Failed research/agent work is immediately retryable; concurrent or overlapping runs cannot both claim it.
+Decision trigger claims use a SQLite transaction. Agent jobs use a four-hour recoverable lease and durable
+checkpoints. Completed work is suppressed for seven days. Failed research/agent work is retryable;
+concurrent or overlapping runs cannot both claim it.
 
 ## Idle-cost behavior
 
-A normal daily scan with no signals makes zero paid research or model calls. A persistent entry condition is reevaluated no more than weekly. Perplexity receives all candidates in one low-context Sonar request instead of one request per ticker. Scout and critic also receive candidate batches.
+A normal daily scan with no signals makes zero paid research or model calls. Perplexity receives all candidates
+in one low-context Sonar request instead of one request per ticker. Thesis, scout, and critic receive candidate
+batches. The reviewer runs only when counterfactual marks have matured.
 
-The monthly application budget defaults to $2.00. Once recorded inference/search usage reaches it, the coordinator continues account reconciliation, data scans, and protective exits but suppresses new entry research and decisions. Configure hard provider-side spend limits too; the local ledger cannot prevent a single unexpectedly large response from crossing the remaining budget. OpenRouter's credit-purchase fee is included in the estimator but not in per-response journal cost because it is charged when credits are purchased, not when a request runs.
+The monthly application soft budget defaults to $100 and emits visible warnings without stopping useful
+work. A higher hard boundary defaults to $1,000 but is enforced only when
+`KTA_ENFORCE_MONTHLY_API_BUDGET=true`. Configure provider-side emergency spend limits too; the local ledger
+cannot prevent a single unexpectedly large response from crossing a boundary. OpenRouter's credit-purchase
+fee is included in the estimator but not in per-response journal cost because it is charged when credits
+are purchased, not when a request runs.
 
 OpenRouter reasoning is disabled by default for scout, critic, and reviewer calls. Their job is to return
 bounded structured decisions, not long hidden traces. This reduces both latency and portfolio drag; any
@@ -67,10 +79,9 @@ optimistic average because reasoning tokens count as output.
 | $5/M input, $30/M output | $0.718 | $8.62 | 0.287% |
 | Premium model called daily, reviewer daily | $4.700 | $56.40 | 1.880% |
 
-Agentic research adds up to six director turns (modeled at 5,000 input/1,200 output tokens each) and four
-Sonar requests per signal cycle. At the first row's token rates this ceiling is about $0.278/month; at
-$5/M input and $30/M output it is about $2.346/month. The latter would hit the default $2 local budget,
-so provider-side limits and lower turn/search bounds are required.
+The estimator treats configured turn and search guards as a deliberately pessimistic ceiling. With the new
+64-turn/32-search emergency guards, that ceiling is not an expected usage forecast. Capacity decisions should
+instead use recorded p50/p95 completed-task usage after representative discovery and research evaluations.
 
 These are planning estimates, not price guarantees. They exclude hosting, spreads, slippage, regulatory fees, taxes, and paid market data. A $5/month VPS alone costs $60/year—2% of a $3,000 account—so run on existing hardware or infrastructure during the paper experiment if reliability permits.
 

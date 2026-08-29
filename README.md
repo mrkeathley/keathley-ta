@@ -14,7 +14,10 @@ The product now supports both bounded one-shot runs and a durable event-driven d
 - An independent critic can reject weak or unsupported proposals.
 - A deterministic risk engine clips orders to cash, per-position, gross, and per-run limits.
 - A broker adapter submits only to Alpaca's paper endpoint; a separate simulator supports offline runs.
-- A learning reviewer records observations, hypotheses, and proposed shadow experiments after every run.
+- A mandate-driven discovery agent and independent supervisor construct versioned investment universes.
+- Durable agent task trees record ownership, model, checkpoints, heartbeats, progress, and interventions.
+- A daily evaluator marks every proposed intent at 1/5/20/60 sessions; the reviewer sees mature outcomes only.
+- Learning changes are versioned as durable experiments rather than silently mutating promoted policy.
 - SQLite stores the full decision trail and atomically prevents duplicate intents.
 - Perplexity can collect catalyst, AI-supply-chain, attention, and congressional-disclosure evidence with source URLs.
 - A leased SQLite job queue drives scheduled scans, price triggers, chat, suggestion review, market-open revalidation, and execution.
@@ -46,8 +49,9 @@ Run `make` by itself to see every target and whether it can contact external ser
 performs a temporary end-to-end simulation with synthetic placeholder symbols; it ignores configured
 API and broker modes and deletes its journal afterward.
 
-For a configured run, copy `.env.example` to `.env`, choose the deployment's comma-separated
-`KTA_UNIVERSE`, then validate and execute:
+For a configured run, keep non-secret direction in `config/mandate.toml`, runtime model routing in
+`config/runtime.toml`, protected risk settings in `config/policy.toml`, and copy
+`secrets.env.example` to the ignored `secrets.env`. Environment variables remain deployment overrides.
 
 ```bash
 make doctor
@@ -63,9 +67,10 @@ uv run --locked kta events RUN_ID
 uv run --locked kta estimate-cost
 ```
 
-There is intentionally no default investment universe. The code owns eligibility and safety rules; the
-deployment owns its watchlist. See [universe policy](docs/universe-policy.md) for the current boundary and
-the planned research-driven discovery process.
+There is intentionally no default ticker list. With continuous discovery enabled, the mandate drives
+research and the latest independently supervised journal snapshot becomes the active universe.
+`KTA_UNIVERSE` is retained only for seeds and offline compatibility. See
+[universe policy](docs/universe-policy.md).
 
 Progress is written to stderr as one updating terminal line while the final JSON stays on stdout. When
 output is redirected, each stage becomes a normal log line. Use `kta run --quiet` only when another
@@ -92,25 +97,35 @@ It runs independent scheduler, trigger-poller, HTTP, and worker threads backed b
 Price alerts may be polled from Alpaca or delivered to an authenticated webhook. Agent-created alerts are
 validated data records—not arbitrary installed webhooks—and can only queue research/scan work.
 
-Daemon trade flow is asynchronous: discovery creates a suggestion, a critic reviews it, off-hours approval
+Daemon trade flow is asynchronous: a scan creates a suggestion, a critic reviews it, off-hours approval
 waits in the queue, and market open forces fresh signal/research/critic validation before deterministic risk
-and idempotent submission. See [daemon architecture](docs/daemon.md) and the [control API](docs/control-api.md).
+and idempotent submission. Broker acceptance remains pending until reconciliation confirms a fill; filled
+entries arm deterministic protective price triggers. See [daemon architecture](docs/daemon.md) and the
+[control API](docs/control-api.md).
 
 The configured mode defaults are offline—synthetic bars, heuristic agents, no research network call,
-and a $3,000 simulated account—but `KTA_UNIVERSE` is still required. Simulator holdings reset when the
+and a $3,000 simulated account. Offline operation needs explicit seed symbols; continuous discovery does not.
+Simulator holdings reset when the
 process exits; the audit and duplicate-order ledger in `var/kta.db` do not.
 
 ## Configure paper trading
 
-Copy `.env.example` to `.env`, then supply paper-account keys:
+Set paper mode in regular configuration:
 
 ```dotenv
 KTA_BROKER_MODE=paper
 KTA_MARKET_DATA_MODE=alpaca
+```
+
+Then copy `secrets.env.example` to `secrets.env` and supply paper-account keys there:
+
+```dotenv
+# secrets.env
 ALPACA_API_KEY=...
 ALPACA_API_SECRET=...
-ALPACA_TRADING_URL=https://paper-api.alpaca.markets
 ```
+
+Keep `ALPACA_TRADING_URL=https://paper-api.alpaca.markets` in regular runtime configuration.
 
 `AlpacaPaperBroker` refuses any URL that does not contain `paper-api`. There is no live broker class or `live` configuration value in this release.
 
@@ -118,30 +133,48 @@ Enable the research and model loop independently:
 
 ```dotenv
 KTA_RESEARCH_MODE=perplexity
-PERPLEXITY_API_KEY=...
-
 KTA_AGENT_MODE=openrouter
-OPENROUTER_API_KEY=...
 KTA_SCOUT_MODEL=provider/scout-model
 KTA_CRITIC_MODEL=provider/critic-model
 KTA_REVIEWER_MODEL=provider/reviewer-model
+KTA_SUPERVISOR_MODEL=openai/gpt-5.6-terra
+KTA_DISCOVERY_MODEL=deepseek/deepseek-v4-flash
+KTA_RESEARCHER_MODEL=openai/gpt-5.6-luna
+KTA_THESIS_MODEL=openai/gpt-5.6-terra
+KTA_TRADE_MODEL=openai/gpt-5.6-sol
 KTA_OPENROUTER_REASONING_EFFORT=none
 ```
 
+`PERPLEXITY_API_KEY` and `OPENROUTER_API_KEY` belong only in `secrets.env` or the deployment's
+secret manager.
+
 The original fast behavior is expected when `KTA_RESEARCH_MODE=none` or when a signal is inside its
-cooldown. Enable the bounded multi-turn research director explicitly:
+cooldown. Enable the persistent research director explicitly:
 
 ```dotenv
 KTA_RESEARCH_MODE=perplexity
 KTA_AGENT_MODE=openrouter
 KTA_AGENTIC_RESEARCH_ENABLED=true
-KTA_AGENT_MAX_TURNS=6
-KTA_AGENT_MAX_RESEARCH_CALLS=4
+KTA_AGENT_MAX_TURNS=64
+KTA_AGENT_MAX_RESEARCH_CALLS=32
 ```
 
+Enable recursive discovery:
+
+```dotenv
+KTA_DISCOVERY_ENABLED=true
+KTA_DISCOVERY_INTERVAL_HOURS=6
+KTA_DISCOVERY_ON_START=true
+KTA_SCAN_AFTER_DISCOVERY=true
+```
+
+Each refresh searches the mandate, proposes previously unknown symbols, applies an independent supervisor
+review, records the full snapshot, and queues a scan of accepted candidates. The portfolio model can allocate
+only inside that snapshot; deterministic risk remains the credential-blind executor.
+
 This lets the director make focused Perplexity tool calls, inspect allowed candidate context, and create
-validated price triggers before returning its evidence memo. Every turn and search is costed; the loop is
-bounded because useful research—not wall-clock duration—is the objective.
+validated price triggers before returning its evidence memo. Every turn and search is costed. The numeric
+ceilings are emergency loop guards; useful work and evidence-based stopping—not brevity—are the objective.
 
 Choose current OpenRouter model IDs rather than copying the placeholders. Use separate models or providers for scout and critic when practical. The application requests structured JSON and fails closed when an intent is omitted or malformed.
 
@@ -171,10 +204,15 @@ Paid calls are event-driven:
 - New or refreshed entry signal: baseline mode uses one batched Perplexity request, one scout call, and one critic call; agentic research uses up to its configured turn/search ceilings.
 - Same symbol/strategy/action inside seven days: decision work is suppressed transactionally.
 - Protective exit: deterministic path; no research or LLM approval.
-- Learning review: at most weekly and only after material activity.
-- Monthly recorded API cost at the configured limit: new entries stop; deterministic monitoring and exits continue.
+- Learning review: at most daily and only after new counterfactual outcome marks mature.
+- Monthly recorded API cost at the soft limit: a visible warning is recorded and work continues. Set
+  `KTA_ENFORCE_MONTHLY_API_BUDGET=true` to make the higher hard limit suppress new paid entry work.
 
-With four signal-bearing cycles and two review batches per month, baseline research projects roughly **$0.080/month** using the default planning rates, or about **$0.96/year / 0.032% of a $3,000 portfolio**. Enabling the six-turn/four-search agentic ceiling raises that conservative projection to about **$0.278/month**. A deliberately expensive $5/M input, $30/M output mix raises the baseline cadence to about $0.72/month and the agentic ceiling to about $2.35/month—where the default $2 application budget would stop new work. Run `kta estimate-cost` with the prices of the exact models selected; actual OpenRouter and Perplexity usage is stored with each run.
+The configured 64-turn/32-search values are emergency guards, so treating every task as if it exhausts them
+produces an intentionally extreme estimate rather than a normal forecast. Run `kta estimate-cost` with the
+prices of the exact models selected, and use journaled p50/p95 completed-task usage once representative
+discovery and research runs exist. The default $100 soft budget warns without interrupting work; hard local
+enforcement is opt-in and provider-side emergency limits remain advisable.
 
 See [runtime and cost design](docs/runtime-and-costs.md) for the trigger table, multiprocess threshold, and more conservative scenarios.
 
@@ -200,7 +238,10 @@ construction but is not a ticker list in source code. Symbols can be changed wit
 
 ## Self-improvement boundary
 
-The reviewer can create falsifiable hypotheses and shadow-experiment suggestions. It cannot edit code, loosen risk, change the promoted strategy, or submit orders. Automatic promotion comes only after the outcome evaluator and walk-forward comparison gate described in [the learning loop](docs/learning-loop.md) are implemented.
+The reviewer creates falsifiable hypotheses and shadow-experiment suggestions. Agent work is durable and
+recursive, but promoted execution policy remains versioned: models cannot silently edit `config/policy.toml`,
+read broker credentials, or submit orders. Strategy promotion still belongs behind the outcome evaluator and
+walk-forward comparison gate described in [the learning loop](docs/learning-loop.md).
 
 That boundary matters even when a full loss is acceptable: otherwise the experiment cannot tell model improvement from strategy drift, leakage, or luck.
 

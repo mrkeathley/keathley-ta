@@ -7,7 +7,7 @@ from .domain import Bar, Position, Signal, SignalAction, decimal
 
 
 class TrendPullbackStrategy:
-    version = "trend-pullback-atr-v3"
+    version = "trend-pullback-atr-wilder-high-since-entry-v4"
 
     def __init__(
         self,
@@ -15,13 +15,11 @@ class TrendPullbackStrategy:
         long_window: int = 200,
         atr_window: int = 10,
         atr_multiplier: Decimal = Decimal("4"),
-        trail_window: int = 63,
     ):
         self.short_window = short_window
         self.long_window = long_window
         self.atr_window = atr_window
         self.atr_multiplier = atr_multiplier
-        self.trail_window = trail_window
 
     @staticmethod
     def _average(values: List[Decimal]) -> Decimal:
@@ -39,10 +37,32 @@ class TrendPullbackStrategy:
                     abs(current.low - previous_close),
                 )
             )
-        return self._average(ranges[-self.atr_window :])
+        if len(ranges) < self.atr_window:
+            return Decimal("0")
+        # Pine ta.atr uses Wilder's RMA: seed with an SMA, then recursively smooth.
+        value = self._average(ranges[: self.atr_window])
+        for true_range in ranges[self.atr_window :]:
+            value = ((value * Decimal(self.atr_window - 1)) + true_range) / Decimal(
+                self.atr_window
+            )
+        return value
 
-    def analyze(self, bars: List[Bar], position: Optional[Position]) -> Optional[Signal]:
-        required = max(self.long_window, self.atr_window + 1, self.trail_window)
+    def trailing_stop(self, bars: List[Bar], high_since_entry: Decimal) -> Optional[Decimal]:
+        ordered = sorted(bars, key=lambda bar: bar.timestamp)
+        if len(ordered) < max(self.long_window, self.atr_window + 1):
+            return None
+        atr = self._atr(ordered)
+        if atr <= 0:
+            return None
+        return max(high_since_entry, ordered[-1].close) - (atr * self.atr_multiplier)
+
+    def analyze(
+        self,
+        bars: List[Bar],
+        position: Optional[Position],
+        high_since_entry: Optional[Decimal] = None,
+    ) -> Optional[Signal]:
+        required = max(self.long_window, self.atr_window + 1)
         if len(bars) < required:
             return None
         ordered = sorted(bars, key=lambda bar: bar.timestamp)
@@ -52,7 +72,11 @@ class TrendPullbackStrategy:
         atr = self._atr(ordered)
         if atr <= 0:
             return None
-        highest_close = max(bar.close for bar in ordered[-self.trail_window :])
+        highest_close = (
+            max(high_since_entry or close, close)
+            if position and position.quantity > 0
+            else close
+        )
         stop = highest_close - (atr * self.atr_multiplier)
         if position and position.quantity > 0:
             if close < stop:
@@ -67,7 +91,7 @@ class TrendPullbackStrategy:
                     stop_price=stop,
                     confidence=Decimal("1"),
                     strategy_version=self.version,
-                    explanation="Close fell below the rolling ATR trailing stop.",
+                    explanation="Close fell below the high-since-entry Wilder ATR trailing stop.",
                 )
             return None
         if close > long_average and close < short_average:
@@ -87,4 +111,3 @@ class TrendPullbackStrategy:
                 explanation="Price is above the long-term regime filter and below the short-term mean.",
             )
         return None
-

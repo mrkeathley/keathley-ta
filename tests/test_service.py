@@ -30,6 +30,45 @@ class MutableClock(MarketClock):
 
 
 class DaemonServiceTests(unittest.TestCase):
+    def test_discovery_eligibility_rejects_untradable_symbols(self):
+        class Directory:
+            def asset_metadata(self, symbol):
+                return {
+                    "symbol": symbol,
+                    "verified": True,
+                    "asset_class": "us_equity",
+                    "status": "active",
+                    "tradable": symbol == "GOOD",
+                }
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "KTA_UNIVERSE": "GOOD",
+                "KTA_DATABASE_PATH": str(Path(directory) / "service.db"),
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env(Path("/missing"))
+            runtime = build_components(settings)
+            runtime = replace(
+                runtime,
+                market=SyntheticMarketData(utc_now() - timedelta(days=1)),
+                asset_directory=Directory(),
+            )
+            service = DaemonService(settings, runtime)
+            candidates = [
+                {"symbol": "GOOD", "status": "active", "metadata": {}},
+                {"symbol": "BAD", "status": "active", "metadata": {}},
+            ]
+
+            eligible = service._validate_discovery_candidates(candidates)
+
+            self.assertEqual(eligible, 1)
+            self.assertEqual(candidates[0]["status"], "active")
+            self.assertEqual(candidates[1]["status"], "rejected")
+            self.assertIn("not tradable", candidates[1]["metadata"]["eligibility_reason"])
+
     def test_suggestion_is_reviewed_off_hours_revalidated_at_open_and_executed(self):
         now = utc_now()
         with tempfile.TemporaryDirectory() as directory, patch.dict(
@@ -76,6 +115,12 @@ class DaemonServiceTests(unittest.TestCase):
                 service.journal.trade_suggestion(suggestion["suggestion_id"])["status"],
                 "executed",
             )
+            stops = [
+                item for item in service.journal.price_triggers(10)
+                if item["source"] == "protective-stop"
+            ]
+            self.assertEqual(len(stops), 1)
+            self.assertEqual(stops[0]["comparison"], "below")
 
 
 if __name__ == "__main__":

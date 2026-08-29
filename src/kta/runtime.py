@@ -4,9 +4,10 @@ from dataclasses import dataclass
 
 from .agentic_research import AgenticResearchProvider
 from .agents import AgentSuite, HeuristicAgentSuite, OpenRouterAgentSuite
-from .brokers import AlpacaPaperBroker, Broker, SimulatedBroker
+from .brokers import AlpacaAssetDirectory, AlpacaPaperBroker, Broker, SimulatedBroker
 from .clock import AlpacaMarketClock, MarketClock, WeekdayMarketClock
 from .config import Settings
+from .discovery import DiscoveryEngine
 from .journal import Journal
 from .loop import TradingLoop
 from .market import AlpacaMarketData, MarketDataProvider, SyntheticMarketData
@@ -24,6 +25,8 @@ class RuntimeComponents:
     agents: AgentSuite
     risk: RiskEngine
     market_clock: MarketClock
+    discovery: DiscoveryEngine | None = None
+    asset_directory: object | None = None
 
 
 def build_components(settings: Settings) -> RuntimeComponents:
@@ -60,10 +63,11 @@ def build_components(settings: Settings) -> RuntimeComponents:
     if settings.agent_mode == "openrouter":
         agents: AgentSuite = OpenRouterAgentSuite(
             settings.openrouter_api_key or "",
-            settings.scout_model or "",
+            settings.trade_model or settings.scout_model or "",
             settings.critic_model or "",
             settings.reviewer_model or "",
             settings.openrouter_reasoning_effort,
+            thesis_model=settings.thesis_model,
         )
     else:
         agents = HeuristicAgentSuite()
@@ -71,9 +75,10 @@ def build_components(settings: Settings) -> RuntimeComponents:
         research = AgenticResearchProvider(
             OpenRouterToolAgent(
                 settings.openrouter_api_key or "",
-                settings.scout_model or "",
+                settings.researcher_model or settings.scout_model or "",
                 reasoning_effort=settings.openrouter_reasoning_effort,
                 max_turns=settings.agent_max_turns,
+                max_tokens_per_turn=settings.agent_max_tokens_per_turn,
             ),
             PerplexityResearch(settings.perplexity_api_key or "", settings.perplexity_model),
             market,
@@ -90,11 +95,31 @@ def build_components(settings: Settings) -> RuntimeComponents:
             minimum_confidence=settings.minimum_confidence,
             minimum_order_notional=settings.minimum_order_notional,
             daily_loss_kill_pct=settings.daily_loss_kill_pct,
+            risk_per_trade_pct=settings.risk_per_trade_pct,
             options_enabled=settings.options_enabled,
             shorting_enabled=settings.shorting_enabled,
         )
     )
-    return RuntimeComponents(journal, market, broker, research, agents, risk, market_clock)
+    discovery = None
+    if settings.discovery_enabled:
+        discovery = DiscoveryEngine(
+            openrouter_api_key=settings.openrouter_api_key or "",
+            model=settings.discovery_model or "",
+            supervisor_model=settings.supervisor_model or settings.discovery_model or "",
+            research=PerplexityResearch(settings.perplexity_api_key or "", settings.perplexity_model),
+            max_candidates=settings.discovery_max_candidates,
+            reasoning_effort="low",
+        )
+    asset_directory = None
+    if settings.alpaca_api_key and settings.alpaca_api_secret:
+        asset_directory = AlpacaAssetDirectory(
+            settings.alpaca_trading_url,
+            settings.alpaca_api_key,
+            settings.alpaca_api_secret,
+        )
+    return RuntimeComponents(
+        journal, market, broker, research, agents, risk, market_clock, discovery, asset_directory
+    )
 
 
 def build_loop(
@@ -117,6 +142,7 @@ def build_loop(
         decision_cooldown_hours=settings.decision_cooldown_hours,
         review_min_interval_hours=settings.review_min_interval_hours,
         monthly_api_budget_usd=settings.monthly_api_budget_usd,
+        enforce_monthly_api_budget=settings.enforce_monthly_api_budget,
         paid_api_enabled=(settings.agent_mode == "openrouter" or settings.research_mode == "perplexity"),
         defer_execution=defer_execution,
         progress=progress,

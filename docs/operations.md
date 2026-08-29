@@ -54,7 +54,9 @@ For a compromised key, revoke it at the provider before investigating applicatio
 
 - Simulated-broker holdings are process-local and are not a fill/slippage model.
 - Daily-bar strategy only; no intraday scheduling or real-time risk monitor.
-- Alpaca orders are journaled when accepted, but fill and partial-fill reconciliation is not implemented yet.
+- Alpaca orders are journaled when accepted and reconciled by broker order ID until terminal. A filled entry
+  arms a deterministic below-price protective trigger; pending orders are recovered for reconciliation when
+  the daemon restarts. Partial fills are recorded, but sophisticated partial-fill resizing remains future work.
 - No outcome/counterfactual evaluator yet.
 - No corporate-action reconciliation.
 - No Google Trends production adapter.

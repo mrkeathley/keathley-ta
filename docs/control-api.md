@@ -13,10 +13,15 @@ daemon binds beyond loopback.
 | `GET` | `/v1/status` | Threads, queue counts, market session, suggestions, recent runs, safe config |
 | `GET` | `/v1/jobs?limit=20` | Durable job attempts, errors, and results |
 | `GET` | `/v1/events?limit=50` | Scheduler, worker, trigger, and HTTP activity |
+| `GET` | `/v1/agents?limit=100` | Supervised agent task tree, progress, checkpoints, and errors |
+| `GET` | `/v1/universe?limit=20` | Current generated symbols and versioned snapshots |
+| `GET` | `/v1/experiments?limit=100` | Versioned self-improvement hypotheses and shadow status |
 | `GET` | `/v1/suggestions` | Trade-suggestion states and review decisions |
 | `GET` | `/v1/triggers` | Active/fired/disabled price triggers |
 | `GET` | `/v1/conversations/{id}` | Durable chat transcript |
 | `POST` | `/v1/scans` | Queue a configured-universe scan |
+| `POST` | `/v1/discovery` | Queue a mandate-driven universe refresh |
+| `POST` | `/v1/agents/TASK_ID` | Pause, resume, or cancel durable agent work |
 | `POST` | `/v1/triggers` | Create a validated price trigger |
 | `POST` | `/v1/webhooks/price` | Ingest an authenticated external price event |
 | `POST` | `/v1/chat` | Queue a control-assistant response |

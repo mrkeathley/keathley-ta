@@ -10,6 +10,23 @@ from .domain import Bar, decimal, utc_now
 from .http import request_json
 
 
+def completed_daily_bars(bars: List[Bar], as_of: datetime) -> List[Bar]:
+    """Exclude the current session until its regular daily bar is final."""
+
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    current = as_of.astimezone(eastern)
+    current_date = current.date()
+    regular_session_complete = (current.hour, current.minute) >= (16, 15)
+    result = []
+    for bar in sorted(bars, key=lambda item: item.timestamp):
+        bar_date = bar.timestamp.astimezone(eastern).date()
+        if bar_date < current_date or (bar_date == current_date and regular_session_complete):
+            result.append(bar)
+    return result
+
+
 def parse_timestamp(value: str) -> datetime:
     normalized = value.replace("Z", "+00:00")
     parsed = datetime.fromisoformat(normalized)

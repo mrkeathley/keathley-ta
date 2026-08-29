@@ -3,7 +3,7 @@
 import uuid
 from abc import ABC, abstractmethod
 from decimal import Decimal
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from .domain import (
     AccountSnapshot,
@@ -30,6 +30,38 @@ class Broker(ABC):
     @abstractmethod
     def submit(self, order: OrderRequest) -> OrderReceipt:
         raise NotImplementedError
+
+    def order_status(self, broker_order_id: str) -> OrderReceipt:
+        raise NotImplementedError("This broker does not support order reconciliation")
+
+    def asset_metadata(self, symbol: str) -> Dict[str, Any]:
+        return {"symbol": symbol.upper(), "verified": False}
+
+
+class AlpacaAssetDirectory:
+    """Read-only asset eligibility lookup, independent of execution mode."""
+
+    def __init__(self, base_url: str, api_key: str, api_secret: str):
+        self.base_url = base_url.rstrip("/")
+        self.headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": api_secret,
+        }
+
+    def asset_metadata(self, symbol: str) -> Dict[str, Any]:
+        payload = request_json(
+            "GET", self.base_url + "/v2/assets/{}".format(symbol.upper()), headers=self.headers
+        )
+        return {
+            "symbol": str(payload.get("symbol") or symbol).upper(),
+            "name": str(payload.get("name") or ""),
+            "asset_class": str(payload.get("class") or ""),
+            "exchange": str(payload.get("exchange") or ""),
+            "status": str(payload.get("status") or ""),
+            "tradable": bool(payload.get("tradable")),
+            "fractionable": bool(payload.get("fractionable")),
+            "verified": True,
+        }
 
 
 class AlpacaPaperBroker(Broker):
@@ -86,13 +118,50 @@ class AlpacaPaperBroker(Broker):
         else:
             raise ValueError("An order requires notional or quantity")
         payload = request_json("POST", self.base_url + "/v2/orders", headers=self.headers, body=body)
+        return self._receipt(payload)
+
+    def order_status(self, broker_order_id: str) -> OrderReceipt:
+        payload = request_json(
+            "GET", self.base_url + "/v2/orders/{}".format(broker_order_id), headers=self.headers
+        )
+        return self._receipt(payload)
+
+    def asset_metadata(self, symbol: str) -> Dict[str, Any]:
+        payload = request_json(
+            "GET", self.base_url + "/v2/assets/{}".format(symbol.upper()), headers=self.headers
+        )
+        return {
+            "symbol": str(payload.get("symbol") or symbol).upper(),
+            "name": str(payload.get("name") or ""),
+            "asset_class": str(payload.get("class") or ""),
+            "exchange": str(payload.get("exchange") or ""),
+            "status": str(payload.get("status") or ""),
+            "tradable": bool(payload.get("tradable")),
+            "fractionable": bool(payload.get("fractionable")),
+            "verified": True,
+        }
+
+    @staticmethod
+    def _receipt(payload: Dict[str, Any]) -> OrderReceipt:
+        from .market import parse_timestamp
+
+        filled_qty = payload.get("filled_qty")
+        filled_price = payload.get("filled_avg_price")
+        filled_at = payload.get("filled_at")
         return OrderReceipt(
             broker_order_id=str(payload["id"]),
-            client_order_id=str(payload.get("client_order_id", order.client_order_id)),
+            client_order_id=str(payload.get("client_order_id") or ""),
             symbol=str(payload["symbol"]),
             side=Side(str(payload["side"])),
             status=str(payload["status"]),
-            submitted_at=utc_now(),
+            submitted_at=(
+                parse_timestamp(str(payload["submitted_at"]))
+                if payload.get("submitted_at")
+                else utc_now()
+            ),
+            filled_quantity=decimal(filled_qty) if filled_qty not in {None, ""} else None,
+            filled_average_price=decimal(filled_price) if filled_price not in {None, ""} else None,
+            filled_at=parse_timestamp(str(filled_at)) if filled_at else None,
         )
 
 
@@ -105,6 +174,7 @@ class SimulatedBroker(Broker):
         self.prices = {key.upper(): decimal(value) for key, value in (prices or {}).items()}
         self._positions: Dict[str, Position] = {}
         self.orders: List[OrderRequest] = []
+        self.receipts: Dict[str, OrderReceipt] = {}
 
     def set_price(self, symbol: str, price: Decimal) -> None:
         self.prices[symbol.upper()] = decimal(price)
@@ -177,11 +247,21 @@ class SimulatedBroker(Broker):
                     asset_class=current.asset_class,
                 )
         self.orders.append(order)
-        return OrderReceipt(
+        receipt = OrderReceipt(
             broker_order_id="sim-{}".format(uuid.uuid4().hex),
             client_order_id=order.client_order_id,
             symbol=order.symbol,
             side=order.side,
             status="filled",
             submitted_at=utc_now(),
+            filled_quantity=quantity,
+            filled_average_price=price,
+            filled_at=utc_now(),
         )
+        self.receipts[receipt.broker_order_id] = receipt
+        return receipt
+
+    def order_status(self, broker_order_id: str) -> OrderReceipt:
+        if broker_order_id not in self.receipts:
+            raise KeyError("Unknown simulated order {}".format(broker_order_id))
+        return self.receipts[broker_order_id]

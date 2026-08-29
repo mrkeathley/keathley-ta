@@ -1,5 +1,6 @@
 import os
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,6 +58,40 @@ class SettingsTests(unittest.TestCase):
             settings = Settings.from_env(Path("/path/that/does/not/exist"))
 
         self.assertTrue(any("KTA_CONTROL_TOKEN" in error for error in settings.validate()))
+
+    def test_toml_configuration_is_separate_from_secrets_and_environment_wins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config").mkdir()
+            (root / "config" / "mandate.toml").write_text(
+                '[mandate]\nthemes = ["power", "cooling"]\nregions = ["US"]\n', encoding="utf-8"
+            )
+            (root / "config" / "runtime.toml").write_text(
+                '[runtime]\ndiscovery_enabled = true\n[models]\ndiscovery = "cheap/model"\n',
+                encoding="utf-8",
+            )
+            (root / "secrets.env").write_text(
+                "OPENROUTER_API_KEY=secret\nPERPLEXITY_API_KEY=search-secret\n", encoding="utf-8"
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "KTA_AGENT_MODE": "openrouter",
+                    "KTA_RESEARCH_MODE": "perplexity",
+                    "KTA_TRADE_MODEL": "trade/model",
+                    "KTA_CRITIC_MODEL": "critic/model",
+                    "KTA_REVIEWER_MODEL": "review/model",
+                    "KTA_MANDATE_TIME_HORIZON": "years",
+                },
+                clear=True,
+            ):
+                settings = Settings.from_env(root / ".env")
+
+            self.assertEqual(settings.mandate_themes, ["power", "cooling"])
+            self.assertEqual(settings.mandate_time_horizon, "years")
+            self.assertTrue(settings.discovery_enabled)
+            self.assertEqual(settings.openrouter_api_key, "secret")
+            self.assertNotIn("secret", str(settings.safe_dict()))
 
 
 if __name__ == "__main__":

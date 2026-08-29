@@ -167,8 +167,295 @@ class Journal:
                 );
                 CREATE INDEX IF NOT EXISTS idx_conversations_thread
                     ON conversations(conversation_id, created_at);
+                CREATE TABLE IF NOT EXISTS universe_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    mandate_json TEXT NOT NULL,
+                    citations_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS universe_candidates (
+                    snapshot_id TEXT NOT NULL REFERENCES universe_snapshots(snapshot_id),
+                    symbol TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    theme TEXT NOT NULL,
+                    rationale TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    PRIMARY KEY(snapshot_id, symbol)
+                );
+                CREATE INDEX IF NOT EXISTS idx_universe_candidates_status
+                    ON universe_candidates(status, symbol);
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                    task_id TEXT PRIMARY KEY,
+                    parent_task_id TEXT REFERENCES agent_tasks(task_id),
+                    role TEXT NOT NULL,
+                    model TEXT,
+                    objective TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    progress TEXT NOT NULL,
+                    checkpoint_json TEXT NOT NULL,
+                    heartbeat_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_tasks_status
+                    ON agent_tasks(status, updated_at);
+                CREATE TABLE IF NOT EXISTS learning_experiments (
+                    experiment_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    parameter TEXT NOT NULL,
+                    proposal TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    metrics_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_experiments_status
+                    ON learning_experiments(status, created_at);
+                CREATE TABLE IF NOT EXISTS intent_outcomes (
+                    intent_id TEXT NOT NULL,
+                    horizon_sessions INTEGER NOT NULL,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    signal_at TEXT NOT NULL,
+                    baseline_price TEXT NOT NULL,
+                    disposition TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    marked_at TEXT,
+                    mark_price TEXT,
+                    raw_return TEXT,
+                    side_adjusted_return TEXT,
+                    maximum_favorable_excursion TEXT,
+                    maximum_adverse_excursion TEXT,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(intent_id, horizon_sessions)
+                );
+                CREATE INDEX IF NOT EXISTS idx_intent_outcomes_pending
+                    ON intent_outcomes(status, symbol, signal_at);
+                CREATE TABLE IF NOT EXISTS position_trails (
+                    symbol TEXT PRIMARY KEY,
+                    high_since_entry TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
+
+    def create_agent_task(
+        self,
+        role: str,
+        objective: str,
+        *,
+        model: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+    ) -> str:
+        task_id = uuid.uuid4().hex
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_tasks(
+                    task_id, parent_task_id, role, model, objective, status, progress,
+                    checkpoint_json, heartbeat_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'queued', '', '{}', ?, ?, ?)
+                """,
+                (task_id, parent_task_id, role, model, objective, now, now, now),
+            )
+        return task_id
+
+    def update_agent_task(
+        self,
+        task_id: str,
+        *,
+        status: Optional[str] = None,
+        progress: Optional[str] = None,
+        checkpoint: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        allowed = {"queued", "running", "complete", "failed", "paused", "cancelled"}
+        if status is not None and status not in allowed:
+            raise ValueError("Invalid agent task status {}".format(status))
+        now = utc_now().isoformat()
+        assignments = ["heartbeat_at = ?", "updated_at = ?"]
+        values: List[Any] = [now, now]
+        if status is not None:
+            assignments.append("status = ?")
+            values.append(status)
+            if status == "running":
+                assignments.append("started_at = COALESCE(started_at, ?)")
+                values.append(now)
+            if status in {"complete", "failed", "cancelled"}:
+                assignments.append("finished_at = ?")
+                values.append(now)
+        if progress is not None:
+            assignments.append("progress = ?")
+            values.append(progress[:4000])
+        if checkpoint is not None:
+            assignments.append("checkpoint_json = ?")
+            values.append(json.dumps(jsonable(checkpoint), sort_keys=True))
+        if error is not None:
+            assignments.append("error = ?")
+            values.append(error[:4000])
+        values.append(task_id)
+        with self._connection() as connection:
+            changed = connection.execute(
+                "UPDATE agent_tasks SET {} WHERE task_id = ?".format(", ".join(assignments)),
+                values,
+            )
+        if changed.rowcount != 1:
+            raise KeyError("Unknown agent task {}".format(task_id))
+
+    def agent_tasks(self, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["checkpoint"] = json.loads(item.pop("checkpoint_json"))
+            result.append(item)
+        return result
+
+    def set_agent_task_status(self, task_id: str, status: str) -> None:
+        if status not in {"paused", "queued", "cancelled"}:
+            raise ValueError("Operator status must be paused, queued, or cancelled")
+        self.update_agent_task(task_id, status=status, progress="Set to {} by operator".format(status))
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE jobs SET status = ?, worker_id = NULL, lease_expires_at = NULL, updated_at = ?
+                WHERE json_extract(payload_json, '$.task_id') = ?
+                  AND status IN ('queued', 'running', 'paused')
+                """,
+                (status, now, task_id),
+            )
+
+    def agent_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["checkpoint"] = json.loads(item.pop("checkpoint_json"))
+        return item
+
+    def save_universe_snapshot(
+        self,
+        candidates: List[Dict[str, Any]],
+        *,
+        source: str,
+        mandate: Dict[str, Any],
+        citations: Optional[List[str]] = None,
+    ) -> str:
+        snapshot_id = uuid.uuid4().hex
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO universe_snapshots(snapshot_id, source, mandate_json, citations_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    source,
+                    json.dumps(jsonable(mandate), sort_keys=True),
+                    json.dumps(citations or [], sort_keys=True),
+                    now,
+                ),
+            )
+            for item in candidates:
+                connection.execute(
+                    """
+                    INSERT INTO universe_candidates(
+                        snapshot_id, symbol, name, theme, rationale, confidence, status, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        str(item["symbol"]).upper(),
+                        str(item.get("name") or ""),
+                        str(item.get("theme") or ""),
+                        str(item.get("rationale") or "")[:4000],
+                        str(item.get("confidence") or "0"),
+                        str(item.get("status") or "active"),
+                        json.dumps(jsonable(item.get("metadata") or {}), sort_keys=True),
+                    ),
+                )
+        return snapshot_id
+
+    def current_universe(self) -> List[str]:
+        with self._connection() as connection:
+            snapshot = connection.execute(
+                "SELECT snapshot_id FROM universe_snapshots ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            if snapshot is None:
+                return []
+            rows = connection.execute(
+                """
+                SELECT symbol FROM universe_candidates
+                WHERE snapshot_id = ? AND status = 'active'
+                ORDER BY confidence DESC, symbol
+                """,
+                (snapshot["snapshot_id"],),
+            ).fetchall()
+        return [str(row["symbol"]) for row in rows]
+
+    def current_universe_candidates(self, include_rejected: bool = True) -> List[Dict[str, Any]]:
+        with self._connection() as connection:
+            snapshot = connection.execute(
+                "SELECT snapshot_id FROM universe_snapshots ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            if snapshot is None:
+                return []
+            clause = "" if include_rejected else "AND status = 'active'"
+            rows = connection.execute(
+                """
+                SELECT symbol, name, theme, rationale, confidence, status, metadata_json
+                FROM universe_candidates WHERE snapshot_id = ? {}
+                ORDER BY status, confidence DESC, symbol
+                """.format(clause),
+                (snapshot["snapshot_id"],),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(item.pop("metadata_json"))
+            result.append(item)
+        return result
+
+    def universe_snapshots(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.*, COUNT(c.symbol) AS candidate_count
+                FROM universe_snapshots s
+                LEFT JOIN universe_candidates c ON c.snapshot_id = s.snapshot_id
+                GROUP BY s.snapshot_id ORDER BY s.created_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "snapshot_id": row["snapshot_id"],
+                "source": row["source"],
+                "mandate": json.loads(row["mandate_json"]),
+                "citations": json.loads(row["citations_json"]),
+                "candidate_count": int(row["candidate_count"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def enqueue_job(
         self,
@@ -214,6 +501,13 @@ class Journal:
             if row is None:
                 raise
             return str(row["job_id"])
+
+    def job_for_dedupe(self, dedupe_key: str) -> Optional[str]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT job_id FROM jobs WHERE dedupe_key = ?", (dedupe_key,)
+            ).fetchone()
+        return str(row["job_id"]) if row is not None else None
 
     def claim_job(self, worker_id: str, lease_seconds: int = 300) -> Optional[Dict[str, Any]]:
         now = utc_now()
@@ -266,7 +560,8 @@ class Journal:
             connection.execute(
                 """
                 UPDATE jobs SET status = 'complete', result_json = ?, worker_id = NULL,
-                    lease_expires_at = NULL, error = NULL, updated_at = ? WHERE job_id = ?
+                    lease_expires_at = NULL, error = NULL, updated_at = ?
+                WHERE job_id = ? AND status NOT IN ('cancelled', 'paused')
                 """,
                 (json.dumps(jsonable(result or {}), sort_keys=True), now, job_id),
             )
@@ -279,6 +574,11 @@ class Journal:
             ).fetchone()
             if row is None:
                 raise KeyError("Unknown job {}".format(job_id))
+            current = connection.execute(
+                "SELECT status FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if current is not None and current["status"] == "cancelled":
+                return "cancelled"
             status = "failed" if row["attempts"] >= row["max_attempts"] else "queued"
             connection.execute(
                 """
@@ -430,6 +730,35 @@ class Journal:
                 (status, json.dumps(jsonable(payload), sort_keys=True), utc_now().isoformat(), intent_id),
             )
 
+    def order_record(self, intent_id: str) -> Optional[Dict[str, Any]]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM order_ledger WHERE intent_id = ?", (intent_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["payload"] = json.loads(item.pop("payload_json"))
+        return item
+
+    def pending_order_records(self, limit: int = 500) -> List[Dict[str, Any]]:
+        terminal = ("filled", "canceled", "cancelled", "rejected", "expired", "failed")
+        placeholders = ",".join("?" for _ in terminal)
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM order_ledger WHERE status NOT IN ({})
+                ORDER BY updated_at LIMIT ?
+                """.format(placeholders),
+                (*terminal, limit),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            result.append(item)
+        return result
+
     def has_order(self, intent_id: str) -> bool:
         with self._connection() as connection:
             row = connection.execute(
@@ -443,6 +772,185 @@ class Journal:
                 "INSERT INTO reviews(run_id, created_at, payload_json) VALUES (?, ?, ?)",
                 (run_id, utc_now().isoformat(), json.dumps(jsonable(review), sort_keys=True)),
             )
+
+    def propose_learning_experiments(self, run_id: str, changes: List[Dict[str, Any]]) -> List[str]:
+        experiment_ids = []
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            for change in changes:
+                experiment_id = uuid.uuid4().hex
+                connection.execute(
+                    """
+                    INSERT INTO learning_experiments(
+                        experiment_id, run_id, parameter, proposal, status, metrics_json,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'proposed', '{}', ?, ?)
+                    """,
+                    (
+                        experiment_id,
+                        run_id,
+                        str(change.get("parameter") or "unspecified")[:500],
+                        str(change.get("proposal") or "")[:4000],
+                        now,
+                        now,
+                    ),
+                )
+                experiment_ids.append(experiment_id)
+        return experiment_ids
+
+    def register_intent_outcomes(
+        self,
+        run_id: str,
+        intent: Any,
+        baseline_price: Decimal,
+        horizons: tuple[int, ...] = (1, 5, 20, 60),
+    ) -> None:
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            for horizon in horizons:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO intent_outcomes(
+                        intent_id, horizon_sessions, run_id, symbol, side, signal_at,
+                        baseline_price, disposition, status, metadata_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', 'pending', ?, ?, ?)
+                    """,
+                    (
+                        intent.intent_id,
+                        horizon,
+                        run_id,
+                        intent.symbol,
+                        intent.side.value,
+                        intent.signal_as_of.isoformat(),
+                        str(baseline_price),
+                        json.dumps(
+                            jsonable(
+                                {
+                                    "strategy_version": intent.strategy_version,
+                                    "stop_price": intent.stop_price,
+                                    "confidence": intent.confidence,
+                                }
+                            ),
+                            sort_keys=True,
+                        ),
+                        now,
+                        now,
+                    ),
+                )
+
+    def update_intent_disposition(self, intent_id: str, disposition: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE intent_outcomes SET disposition = ?, updated_at = ? WHERE intent_id = ?",
+                (disposition, utc_now().isoformat(), intent_id),
+            )
+
+    def pending_intent_outcomes(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM intent_outcomes WHERE status = 'pending'
+                ORDER BY signal_at, horizon_sessions LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(item.pop("metadata_json"))
+            result.append(item)
+        return result
+
+    def mark_intent_outcome(
+        self,
+        intent_id: str,
+        horizon_sessions: int,
+        *,
+        marked_at: datetime,
+        mark_price: Decimal,
+        raw_return: Decimal,
+        side_adjusted_return: Decimal,
+        maximum_favorable_excursion: Decimal,
+        maximum_adverse_excursion: Decimal,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE intent_outcomes SET status = 'marked', marked_at = ?, mark_price = ?,
+                    raw_return = ?, side_adjusted_return = ?, maximum_favorable_excursion = ?,
+                    maximum_adverse_excursion = ?, metadata_json = ?, updated_at = ?
+                WHERE intent_id = ? AND horizon_sessions = ? AND status = 'pending'
+                """,
+                (
+                    marked_at.isoformat(),
+                    str(mark_price),
+                    str(raw_return),
+                    str(side_adjusted_return),
+                    str(maximum_favorable_excursion),
+                    str(maximum_adverse_excursion),
+                    json.dumps(jsonable(metadata or {}), sort_keys=True),
+                    now,
+                    intent_id,
+                    horizon_sessions,
+                ),
+            )
+
+    def recent_outcome_marks(self, limit: int = 250) -> List[Dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM intent_outcomes WHERE status = 'marked'
+                ORDER BY marked_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(item.pop("metadata_json"))
+            result.append(item)
+        return result
+
+    def update_position_trail(
+        self, symbol: str, session_high: Decimal, held: bool
+    ) -> Decimal:
+        normalized = symbol.strip().upper()
+        if not held:
+            with self._connection() as connection:
+                connection.execute("DELETE FROM position_trails WHERE symbol = ?", (normalized,))
+            return session_high
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT high_since_entry FROM position_trails WHERE symbol = ?", (normalized,)
+            ).fetchone()
+            high = (
+                max(session_high, Decimal(row["high_since_entry"]))
+                if row
+                else session_high
+            )
+            connection.execute(
+                """
+                INSERT INTO position_trails(symbol, high_since_entry, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET high_since_entry = excluded.high_since_entry,
+                    updated_at = excluded.updated_at
+                """,
+                (normalized, str(high), utc_now().isoformat()),
+            )
+        return high
+
+    def learning_experiments(self, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM learning_experiments ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["metrics"] = json.loads(item.pop("metrics_json"))
+            result.append(item)
+        return result
 
     def recent_reviews(self, limit: int = 5) -> List[Dict[str, Any]]:
         with self._connection() as connection:
@@ -700,6 +1208,67 @@ class Journal:
             )
         return result.rowcount == 1
 
+    def disable_protective_stops(self, symbol: str) -> int:
+        with self._connection() as connection:
+            result = connection.execute(
+                """
+                UPDATE price_triggers SET status = 'disabled', updated_at = ?
+                WHERE symbol = ? AND source = 'protective-stop' AND status = 'active'
+                """,
+                (utc_now().isoformat(), symbol.strip().upper()),
+            )
+        return result.rowcount
+
+    def upsert_protective_stop(
+        self, symbol: str, threshold: Decimal, metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Arm or ratchet a long-position stop upward; never loosen it."""
+
+        normalized = symbol.strip().upper()
+        now = utc_now().isoformat()
+        with self._connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT trigger_id, threshold FROM price_triggers
+                WHERE symbol = ? AND source = 'protective-stop' AND status = 'active'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
+            if existing:
+                ratcheted = max(Decimal(existing["threshold"]), Decimal(threshold))
+                connection.execute(
+                    """
+                    UPDATE price_triggers SET threshold = ?, metadata_json = ?, updated_at = ?
+                    WHERE trigger_id = ?
+                    """,
+                    (
+                        str(ratcheted),
+                        json.dumps(jsonable(metadata or {}), sort_keys=True),
+                        now,
+                        existing["trigger_id"],
+                    ),
+                )
+                return str(existing["trigger_id"])
+            trigger_id = uuid.uuid4().hex
+            connection.execute(
+                """
+                INSERT INTO price_triggers(
+                    trigger_id, symbol, comparison, threshold, status, source, one_shot,
+                    cooldown_seconds, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, 'below', ?, 'active', 'protective-stop', 1, 3600, ?, ?, ?)
+                """,
+                (
+                    trigger_id,
+                    normalized,
+                    str(threshold),
+                    json.dumps(jsonable(metadata or {}), sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+        return trigger_id
+
     def create_trade_suggestion(
         self,
         run_id: str,
@@ -853,7 +1422,7 @@ class Journal:
             rows = connection.execute(
                 """
                 SELECT decision_json FROM trade_suggestions
-                WHERE run_id = ? AND status = 'executed'
+                WHERE run_id = ? AND status IN ('executed', 'submitted_awaiting_fill')
                 """,
                 (run_id,),
             ).fetchall()

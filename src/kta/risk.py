@@ -18,6 +18,7 @@ class RiskPolicy:
     minimum_confidence: Decimal
     minimum_order_notional: Decimal
     daily_loss_kill_pct: Decimal
+    risk_per_trade_pct: Decimal = Decimal("0.01")
     options_enabled: bool = False
     shorting_enabled: bool = False
 
@@ -85,6 +86,19 @@ class RiskEngine:
                     decisions.append(RiskDecision(intent.intent_id, False, "Daily equity kill switch is active."))
                     continue
             requested = intent.requested_notional or Decimal("0")
+            if (
+                intent.entry_reference_price is not None
+                and intent.stop_price is not None
+                and intent.entry_reference_price > intent.stop_price
+            ):
+                risk_per_share = intent.entry_reference_price - intent.stop_price
+                risk_notional = (
+                    account.equity
+                    * self.policy.risk_per_trade_pct
+                    * intent.entry_reference_price
+                    / risk_per_share
+                )
+                requested = min(requested, risk_notional)
             current_value = abs(positions_by_symbol.get(intent.symbol).market_value) if intent.symbol in positions_by_symbol else Decimal("0")
             symbol_room = (account.equity * self.policy.max_position_pct) - current_value
             gross_room = (account.equity * self.policy.max_gross_exposure_pct) - gross - reserved

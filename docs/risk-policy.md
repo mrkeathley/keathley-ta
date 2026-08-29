@@ -11,6 +11,7 @@ The default $3,000 profile permits:
 - 60% new exposure in one cycle.
 - Up to five submitted orders in a cycle.
 - A 20% daily equity loss kill switch for new entries.
+- At most 1% of equity at risk between the entry reference and initial stop for each new position.
 
 The final numbers are environment configuration, but each run journals the active values.
 
@@ -22,9 +23,11 @@ The final numbers are environment configuration, but each run journals the activ
 - No option orders in the current release.
 - A valid recent daily signal and stop reference are required for entry.
 - A deterministic client order ID is claimed transactionally before submission.
+- Broker acceptance is reconciled to a terminal order state; it is not recorded as a fill.
 - Existing positions, gross exposure, cash, and orders already approved in the run all reduce capacity.
 - Every held symbol is scanned even when it is absent from the entry universe; missing held-symbol data fails the run.
 - Protective exits are deterministic and cannot be vetoed by a language model.
+- A confirmed filled entry arms a durable below-price protective trigger.
 - Models cannot access broker credentials or broker tools.
 - Model output can only narrow a deterministic candidate set; it cannot add a symbol.
 
