@@ -25,7 +25,7 @@ class OpenRouterAgentSuiteTests(unittest.TestCase):
             "required": ["ok"],
         }
 
-    @patch("kta.agents.request_json")
+    @patch("kta.openrouter.request_json")
     def test_empty_length_response_becomes_actionable_service_error(self, request):
         request.return_value = {
             "id": "generation-id",
@@ -51,7 +51,7 @@ class OpenRouterAgentSuiteTests(unittest.TestCase):
         self.assertNotIn("private model reasoning", message)
         self.assertEqual(self.agents.drain_usage()[0].cost_usd.__str__(), "0.00013659")
 
-    @patch("kta.agents.request_json")
+    @patch("kta.openrouter.request_json")
     def test_structured_response_requests_bounded_reasoning(self, request):
         request.return_value = {
             "usage": {"prompt_tokens": 10, "completion_tokens": 8},
@@ -67,6 +67,32 @@ class OpenRouterAgentSuiteTests(unittest.TestCase):
         self.assertEqual(body["reasoning"], {"effort": "minimal", "exclude": True})
         self.assertEqual(body["max_tokens"], 3000)
         self.assertEqual(body["response_format"]["type"], "json_schema")
+
+    @patch("kta.openrouter.request_json")
+    def test_mandatory_reasoning_retries_with_room_for_structured_output(self, request):
+        self.agents.reasoning_effort = "none"
+        request.side_effect = [
+            ServiceError(
+                "POST endpoint returned 400: Reasoning is mandatory for this endpoint and cannot be disabled."
+            ),
+            {
+                "usage": {"prompt_tokens": 10, "completion_tokens": 8},
+                "choices": [{"finish_reason": "stop", "message": {"content": '{"ok": true}'}}],
+            },
+        ]
+
+        result = self.agents._complete(
+            "critic", "provider/mandatory", "system", {"input": True}, self.schema, 1200
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(request.call_count, 2)
+        retry_body = request.call_args_list[1].kwargs["body"]
+        self.assertEqual(retry_body["reasoning"], {"effort": "minimal", "exclude": True})
+        self.assertEqual(retry_body["max_tokens"], 4000)
+        usage = self.agents.drain_usage()[0]
+        self.assertEqual(usage.metadata["reasoning_effort"], "minimal")
+        self.assertTrue(usage.metadata["reasoning_fallback"])
 
 
 class HeuristicCriticTests(unittest.TestCase):

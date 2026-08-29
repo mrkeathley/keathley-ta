@@ -5,7 +5,7 @@ from kta.tool_agent import AgentTool, OpenRouterToolAgent
 
 
 class OpenRouterToolAgentTests(unittest.TestCase):
-    @patch("kta.tool_agent.request_json")
+    @patch("kta.openrouter.request_json")
     def test_executes_allowlisted_tool_and_continues_to_final_answer(self, request):
         request.side_effect = [
             {

@@ -55,6 +55,7 @@ def _toml_values(base: Path) -> Dict[str, str]:
             ("runtime", "agent_max_research_calls"): "KTA_AGENT_MAX_RESEARCH_CALLS",
             ("runtime", "agent_max_tokens_per_turn"): "KTA_AGENT_MAX_TOKENS_PER_TURN",
             ("runtime", "monthly_api_soft_budget_usd"): "KTA_MONTHLY_API_SOFT_BUDGET_USD",
+            ("runtime", "agent_originated_monthly_budget_usd"): "KTA_AGENT_ORIGINATED_MONTHLY_BUDGET_USD",
             ("models", "supervisor"): "KTA_SUPERVISOR_MODEL",
             ("models", "discovery"): "KTA_DISCOVERY_MODEL",
             ("models", "researcher"): "KTA_RESEARCHER_MODEL",
@@ -140,6 +141,7 @@ class Settings:
     review_min_interval_hours: int
     monthly_api_budget_usd: Decimal
     monthly_api_soft_budget_usd: Decimal
+    agent_originated_monthly_budget_usd: Decimal
     enforce_monthly_api_budget: bool
     estimated_llm_input_usd_per_million: Decimal
     estimated_llm_output_usd_per_million: Decimal
@@ -238,6 +240,9 @@ class Settings:
             review_min_interval_hours=int(get("KTA_REVIEW_MIN_INTERVAL_HOURS", "24")),
             monthly_api_budget_usd=decimal(get("KTA_MONTHLY_API_BUDGET_USD", "1000.00")),
             monthly_api_soft_budget_usd=decimal(get("KTA_MONTHLY_API_SOFT_BUDGET_USD", "100.00")),
+            agent_originated_monthly_budget_usd=decimal(
+                get("KTA_AGENT_ORIGINATED_MONTHLY_BUDGET_USD", "25.00")
+            ),
             enforce_monthly_api_budget=_bool(get("KTA_ENFORCE_MONTHLY_API_BUDGET", "false") or "false"),
             estimated_llm_input_usd_per_million=decimal(
                 get("KTA_ESTIMATED_LLM_INPUT_USD_PER_MILLION", "0.30")
@@ -344,7 +349,11 @@ class Settings:
             errors.append("KTA_REVIEW_MIN_INTERVAL_HOURS cannot be negative")
         if self.decision_cooldown_hours < 1:
             errors.append("KTA_DECISION_COOLDOWN_HOURS must be at least one")
-        if self.monthly_api_budget_usd <= 0 or self.monthly_api_soft_budget_usd <= 0:
+        if (
+            self.monthly_api_budget_usd <= 0
+            or self.monthly_api_soft_budget_usd <= 0
+            or self.agent_originated_monthly_budget_usd <= 0
+        ):
             errors.append("KTA_MONTHLY_API_BUDGET_USD must be greater than zero")
         if self.discovery_enabled and self.research_mode != "perplexity":
             errors.append("Continuous discovery requires KTA_RESEARCH_MODE=perplexity")
@@ -413,6 +422,9 @@ class Settings:
             "decision_cooldown_hours": self.decision_cooldown_hours,
             "monthly_api_budget_usd": str(self.monthly_api_budget_usd),
             "monthly_api_soft_budget_usd": str(self.monthly_api_soft_budget_usd),
+            "agent_originated_monthly_budget_usd": str(
+                self.agent_originated_monthly_budget_usd
+            ),
             "enforce_monthly_api_budget": self.enforce_monthly_api_budget,
             "options_enabled": self.options_enabled,
             "shorting_enabled": self.shorting_enabled,

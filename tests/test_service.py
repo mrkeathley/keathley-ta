@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,6 +31,65 @@ class MutableClock(MarketClock):
 
 
 class DaemonServiceTests(unittest.TestCase):
+    def test_restart_recovers_a_stranded_nonterminal_suggestion(self):
+        now = utc_now()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "KTA_UNIVERSE": "TEST1",
+                "KTA_DATABASE_PATH": str(Path(directory) / "service.db"),
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env(Path("/missing"))
+            runtime = build_components(settings)
+            service = DaemonService(
+                settings,
+                replace(runtime, market=SyntheticMarketData(now)),
+            )
+            service._handle_scan({"symbols": ["TEST1"], "cause": "test"})
+            suggestion = runtime.journal.trade_suggestions(1)[0]
+            existing = next(
+                item
+                for item in runtime.journal.recent_jobs(20)
+                if item["kind"] == "review_suggestion"
+                and item["payload"]["suggestion_id"] == suggestion["suggestion_id"]
+            )
+            runtime.journal.finish_job(existing["job_id"])
+
+            recovered = service._recover_suggestion_jobs()
+
+            self.assertEqual(recovered, 1)
+            self.assertTrue(
+                runtime.journal.has_active_job_for_suggestion(
+                    "review_suggestion", suggestion["suggestion_id"]
+                )
+            )
+
+    def test_agent_originated_scan_has_a_separate_hard_monthly_cap(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "KTA_UNIVERSE": "TEST1",
+                "KTA_DATABASE_PATH": str(Path(directory) / "service.db"),
+            },
+            clear=True,
+        ):
+            settings = replace(
+                Settings.from_env(Path("/missing")),
+                agent_originated_monthly_budget_usd=Decimal("1"),
+            )
+            runtime = build_components(settings)
+            runtime.journal.record_agent_origin_cost(None, "fixture", Decimal("1"))
+            service = DaemonService(settings, runtime)
+
+            result = service._handle_scan(
+                {"symbols": ["TEST1"], "cause": "chat_agent"}
+            )
+
+            self.assertEqual(result["status"], "agent_origin_budget_blocked")
+            self.assertEqual(runtime.journal.recent_runs(1), [])
+
     def test_discovery_eligibility_rejects_untradable_symbols(self):
         class Directory:
             def asset_metadata(self, symbol):

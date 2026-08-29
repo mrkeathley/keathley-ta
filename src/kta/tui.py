@@ -173,11 +173,22 @@ class Dashboard:
         symbols = universe.get("symbols") or []
         self.write(5, 2, "ACTIVE UNIVERSE · {} symbols".format(len(symbols)), curses.A_BOLD | curses.color_pair(1))
         self.write(7, 2, "  ".join(symbols), curses.A_BOLD)
-        self.write(10, 2, "STATUS    SYMBOL   CONF   THEME / SUPERVISOR ASSESSMENT", curses.A_BOLD | curses.color_pair(1))
-        for row, candidate in enumerate(universe.get("candidates") or [], 12):
+        self.write(9, 2, "SNAPSHOTS", curses.A_BOLD | curses.color_pair(1))
+        snapshots = universe.get("snapshots") or []
+        for index, snapshot in enumerate(snapshots[:3]):
+            self.write(
+                10 + index,
+                4,
+                "{}  {:>4} candidates  {}".format(
+                    str(snapshot.get("created_at") or "")[:19],
+                    snapshot.get("candidate_count", 0),
+                    snapshot.get("source") or "",
+                ),
+            )
+        self.write(14, 2, "STATUS    SYMBOL   CONF   THEME / SUPERVISOR ASSESSMENT", curses.A_BOLD | curses.color_pair(1))
+        for row, candidate in enumerate(universe.get("candidates") or [], 16):
             assessment = candidate.get("metadata", {}).get("supervisor_reason") or candidate.get("theme") or candidate.get("rationale")
             self.write(row, 2, "{:<9} {:<8} {:<6} {}".format(candidate["status"], candidate["symbol"], candidate["confidence"], assessment))
-            self.write(row, 4, "{}  {:>4} candidates  {}".format(snapshot["created_at"][:19], snapshot["candidate_count"], snapshot["source"]))
 
     def draw_events(self) -> None:
         self.write(5, 2, "TIME                 LEVEL    EVENT                    MESSAGE", curses.A_BOLD)

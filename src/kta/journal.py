@@ -245,8 +245,37 @@ class Journal:
                     high_since_entry TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS agent_origin_costs (
+                    origin_cost_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT,
+                    cause TEXT NOT NULL,
+                    cost_usd TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_origin_costs_created
+                    ON agent_origin_costs(created_at);
                 """
             )
+
+    def record_agent_origin_cost(
+        self, run_id: Optional[str], cause: str, cost_usd: Decimal
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_origin_costs(run_id, cause, cost_usd, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (run_id, cause[:500], str(cost_usd), utc_now().isoformat()),
+            )
+
+    def agent_origin_cost_since(self, since: datetime) -> Decimal:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT cost_usd FROM agent_origin_costs WHERE created_at >= ?",
+                (since.isoformat(),),
+            ).fetchall()
+        return sum((Decimal(row["cost_usd"]) for row in rows), Decimal("0"))
 
     def create_agent_task(
         self,
@@ -508,6 +537,20 @@ class Journal:
                 "SELECT job_id FROM jobs WHERE dedupe_key = ?", (dedupe_key,)
             ).fetchone()
         return str(row["job_id"]) if row is not None else None
+
+    def has_active_job_for_suggestion(self, kind: str, suggestion_id: str) -> bool:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM jobs
+                WHERE kind = ? AND status IN ('queued', 'running', 'paused')
+                """,
+                (kind,),
+            ).fetchall()
+        return any(
+            str((json.loads(row["payload_json"]) or {}).get("suggestion_id")) == suggestion_id
+            for row in rows
+        )
 
     def claim_job(self, worker_id: str, lease_seconds: int = 300) -> Optional[Dict[str, Any]]:
         now = utc_now()

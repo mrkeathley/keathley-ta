@@ -6,7 +6,8 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 
 from .domain import ApiUsage, decimal, jsonable
-from .http import ServiceError, request_json
+from .http import ServiceError
+from .openrouter import chat_completion
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,14 @@ class OpenRouterToolAgent:
         self._usage.clear()
         return usage
 
-    def _record_usage(self, response: Dict[str, Any], operation: str, turn: int) -> None:
+    def _record_usage(
+        self,
+        response: Dict[str, Any],
+        operation: str,
+        turn: int,
+        effective_reasoning_effort: str,
+        reasoning_fallback: bool,
+    ) -> None:
         raw = response.get("usage") or {}
         raw_cost = raw.get("cost")
         try:
@@ -80,7 +88,9 @@ class OpenRouterToolAgent:
                     "turn": turn,
                     "finish_reason": choices[0].get("finish_reason") if choices else None,
                     "reasoning_tokens": details.get("reasoning_tokens"),
-                    "reasoning_effort": self.reasoning_effort,
+                    "reasoning_effort": effective_reasoning_effort,
+                    "configured_reasoning_effort": self.reasoning_effort,
+                    "reasoning_fallback": reasoning_fallback,
                 },
             )
         )
@@ -100,11 +110,9 @@ class OpenRouterToolAgent:
         messages.append({"role": "user", "content": user})
         executed: List[Dict[str, Any]] = []
         for turn in range(1, self.max_turns + 1):
-            response = request_json(
-                "POST",
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": "Bearer {}".format(self.api_key)},
-                body={
+            response, effective_effort, reasoning_fallback = chat_completion(
+                self.api_key,
+                {
                     "model": self.model,
                     "messages": [dict(item) for item in messages],
                     "tools": [tool.api_definition() for tool in tools],
@@ -115,9 +123,10 @@ class OpenRouterToolAgent:
                     "reasoning": {"effort": self.reasoning_effort, "exclude": True},
                     "usage": {"include": True},
                 },
-                timeout=90,
             )
-            self._record_usage(response, operation, turn)
+            self._record_usage(
+                response, operation, turn, effective_effort, reasoning_fallback
+            )
             choices = response.get("choices") or []
             if not choices:
                 raise ServiceError("OpenRouter tool loop returned no choices on turn {}".format(turn))

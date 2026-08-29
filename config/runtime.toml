@@ -11,6 +11,7 @@ agent_max_turns = 64
 agent_max_research_calls = 32
 agent_max_tokens_per_turn = 8000
 monthly_api_soft_budget_usd = 100
+agent_originated_monthly_budget_usd = 25
 
 [models]
 # OpenRouter slugs. Evaluate these by role before enabling paid operation.

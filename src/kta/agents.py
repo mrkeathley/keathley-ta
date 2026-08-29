@@ -24,7 +24,8 @@ from .domain import (
     decimal,
     jsonable,
 )
-from .http import ServiceError, request_json
+from .http import ServiceError
+from .openrouter import chat_completion
 
 
 def _content_text(value: Any) -> str:
@@ -217,11 +218,9 @@ class OpenRouterAgentSuite(AgentSuite):
         schema: Dict[str, Any],
         max_tokens: int,
     ) -> Dict[str, Any]:
-        response = request_json(
-            "POST",
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": "Bearer {}".format(self.api_key)},
-            body={
+        response, effective_reasoning_effort, reasoning_fallback = chat_completion(
+            self.api_key,
+            {
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system},
@@ -236,7 +235,6 @@ class OpenRouterAgentSuite(AgentSuite):
                     "json_schema": {"name": "kta_response", "strict": True, "schema": schema},
                 },
             },
-            timeout=90,
         )
         raw_usage = response.get("usage") or {}
         completion_details = raw_usage.get("completion_tokens_details") or {}
@@ -263,8 +261,12 @@ class OpenRouterAgentSuite(AgentSuite):
                     "response_id": response.get("id"),
                     "finish_reason": response_finish_reason,
                     "reasoning_tokens": completion_details.get("reasoning_tokens"),
-                    "reasoning_effort": self.reasoning_effort,
-                    "completion_budget_tokens": max_tokens,
+                    "reasoning_effort": effective_reasoning_effort,
+                    "configured_reasoning_effort": self.reasoning_effort,
+                    "reasoning_fallback": reasoning_fallback,
+                    "completion_budget_tokens": (
+                        max(4000, max_tokens) if reasoning_fallback else max_tokens
+                    ),
                 },
             )
         )

@@ -214,6 +214,9 @@ prices of the exact models selected, and use journaled p50/p95 completed-task us
 discovery and research runs exist. The default $100 soft budget warns without interrupting work; hard local
 enforcement is opt-in and provider-side emergency limits remain advisable.
 
+Chat-agent scans and agent-created price-trigger scans additionally share a separate $25 monthly hard cap,
+so recursive monitoring cannot consume the human/manual and daily-schedule allowance.
+
 See [runtime and cost design](docs/runtime-and-costs.md) for the trigger table, multiprocess threshold, and more conservative scenarios.
 
 ## High-risk mandate

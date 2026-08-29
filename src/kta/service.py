@@ -83,6 +83,13 @@ class DaemonService:
                 "Recovered pending broker orders for reconciliation",
                 {"order_count": recovered},
             )
+        recovered_suggestions = self._recover_suggestion_jobs()
+        if recovered_suggestions:
+            self.journal.service_event(
+                "suggestion_jobs_recovered",
+                "Recovered nonterminal trade suggestions with no active job",
+                {"job_count": recovered_suggestions},
+            )
         logger.info("daemon background loops started")
         scheduler = threading.Thread(target=self._scheduler_loop, name="kta-scheduler", daemon=True)
         trigger = threading.Thread(target=self._trigger_loop, name="kta-triggers", daemon=True)
@@ -99,6 +106,46 @@ class DaemonService:
             )
         for thread in self._threads:
             thread.start()
+
+    def _recover_suggestion_jobs(self) -> int:
+        recovered = 0
+        now = utc_now()
+        for suggestion in self.journal.trade_suggestions(1000):
+            status = suggestion["status"]
+            suggestion_id = suggestion["suggestion_id"]
+            if status in {"proposed", "pending_revalidation", "approved_awaiting_open"}:
+                if self.journal.has_active_job_for_suggestion("review_suggestion", suggestion_id):
+                    continue
+                available_at = now
+                revalidate = status == "pending_revalidation"
+                if status == "approved_awaiting_open":
+                    revalidate = True
+                    raw_time = suggestion.get("execute_after")
+                    if raw_time:
+                        available_at = max(now, datetime.fromisoformat(raw_time))
+                self.journal.enqueue_job(
+                    "review_suggestion",
+                    {"suggestion_id": suggestion_id, "revalidate": revalidate},
+                    available_at=available_at,
+                    priority=100 if suggestion["side"] == "sell" else 60,
+                    dedupe_key="suggestion-recovery:{}:{}".format(
+                        suggestion_id, self.started_at.isoformat()
+                    ),
+                )
+                recovered += 1
+            elif status == "approved_ready":
+                if self.journal.has_active_job_for_suggestion("execute_suggestion", suggestion_id):
+                    continue
+                self.journal.enqueue_job(
+                    "execute_suggestion",
+                    {"suggestion_id": suggestion_id},
+                    priority=120 if suggestion["side"] == "sell" else 70,
+                    dedupe_key="execution-recovery:{}:{}".format(
+                        suggestion_id, self.started_at.isoformat()
+                    ),
+                )
+                recovered += 1
+        return recovered
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -258,10 +305,15 @@ class DaemonService:
                     )
                 else:
                     firing_id = uuid.uuid4().hex
+                    cause_prefix = (
+                        "agent_price_trigger"
+                        if trigger.get("source") in {"agent", "chat-agent"}
+                        else "price_trigger"
+                    )
                     self.enqueue_scan(
                         [normalized],
-                        cause="price_trigger:{}:{}:{}".format(
-                            trigger["trigger_id"], source, firing_id
+                        cause="{}:{}:{}:{}".format(
+                            cause_prefix, trigger["trigger_id"], source, firing_id
                         ),
                     )
         self.journal.service_event(
@@ -295,6 +347,16 @@ class DaemonService:
                 level="warning",
             )
         return not self.settings.enforce_monthly_api_budget or spent < self.settings.monthly_api_budget_usd
+
+    def _agent_origin_budget_available(self) -> bool:
+        now = utc_now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        spent = self.journal.agent_origin_cost_since(month_start)
+        return spent < self.settings.agent_originated_monthly_budget_usd
+
+    @staticmethod
+    def _agent_originated_cause(cause: str) -> bool:
+        return cause == "chat_agent" or cause.startswith("agent_price_trigger:")
 
     def _current_universe(self) -> List[str]:
         generated = self.journal.current_universe()
@@ -418,10 +480,15 @@ class DaemonService:
                             )
                         else:
                             firing_id = uuid.uuid4().hex
+                            cause_prefix = (
+                                "agent_price_trigger"
+                                if trigger.get("source") in {"agent", "chat-agent"}
+                                else "price_trigger"
+                            )
                             self.enqueue_scan(
                                 [trigger["symbol"]],
-                                cause="price_trigger:{}:{}".format(
-                                    trigger["trigger_id"], firing_id
+                                cause="{}:{}:{}".format(
+                                    cause_prefix, trigger["trigger_id"], firing_id
                                 ),
                                 dedupe_key="trigger-fire:{}:{}".format(
                                     trigger["trigger_id"], firing_id
@@ -781,6 +848,19 @@ class DaemonService:
         return active
 
     def _handle_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        cause = str(payload.get("cause") or "")
+        agent_originated = self._agent_originated_cause(cause)
+        if agent_originated and not self._agent_origin_budget_available():
+            self.journal.service_event(
+                "agent_origin_budget_blocked",
+                "Agent-originated scan blocked by its separate monthly budget",
+                {
+                    "cause": cause,
+                    "budget_usd": self.settings.agent_originated_monthly_budget_usd,
+                },
+                level="warning",
+            )
+            return {"status": "agent_origin_budget_blocked", "cause": cause}
         progress_events: List[str] = []
 
         def progress(message: str) -> None:
@@ -798,12 +878,18 @@ class DaemonService:
                 [str(item) for item in payload["symbols"]],
                 trigger_context=(
                     str(payload.get("cause"))
-                    if str(payload.get("cause") or "").startswith("price_trigger:")
+                    if str(payload.get("cause") or "").startswith(
+                        ("price_trigger:", "agent_price_trigger:")
+                    )
                     else None
                 ),
             )
         if result.status != RunStatus.COMPLETE:
             raise RuntimeError("Scan run {} failed: {}".format(result.run_id, "; ".join(result.errors)))
+        if agent_originated:
+            self.journal.record_agent_origin_cost(
+                result.run_id, cause, Decimal(result.api_cost_usd)
+            )
         return {
             "run_id": result.run_id,
             "signals": result.signal_count,

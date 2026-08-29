@@ -42,7 +42,7 @@ writer even then.
 | Control chat | User message and remaining monthly budget | OpenRouter | Event-driven |
 | Outcome evaluator | Daily after the scheduled scan | Market data only | Marks 1/5/20/60-session outcomes |
 | Learning reviewer | New mature outcome marks | OpenRouter | At most once per 24 hours |
-| Outcome marks | 1/5/20/60-session horizon becomes mature | No initially | Daily evaluator, upcoming |
+| Outcome marks | 1/5/20/60-session horizon becomes mature | No | Daily evaluator |
 
 Decision trigger claims use a SQLite transaction. Agent jobs use a four-hour recoverable lease and durable
 checkpoints. Completed work is suppressed for seven days. Failed research/agent work is retryable;
@@ -61,8 +61,13 @@ cannot prevent a single unexpectedly large response from crossing a boundary. Op
 fee is included in the estimator but not in per-response journal cost because it is charged when credits
 are purchased, not when a request runs.
 
-OpenRouter reasoning is disabled by default for scout, critic, and reviewer calls. Their job is to return
-bounded structured decisions, not long hidden traces. This reduces both latency and portfolio drag; any
+Agent-originated downstream scans have a separate hard monthly budget controlled by
+`KTA_AGENT_ORIGINATED_MONTHLY_BUDGET_USD` (default $25). It applies to scans requested by the chat agent or
+fired by agent-created price triggers, without consuming the human/manual or daily scheduler allowance.
+
+OpenRouter reasoning is disabled by default for scout, critic, and reviewer calls. If a routed endpoint
+explicitly requires reasoning, the request is retried with hidden minimal reasoning and enough completion
+budget for its structured answer. This keeps latency and portfolio drag bounded; any
 model-specific reasoning setting should be promoted only after structured-output, duration, and cost
 acceptance tests.
 
