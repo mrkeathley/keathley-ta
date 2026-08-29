@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help sync lock test doctor smoke run runs cost build
+.PHONY: help sync lock test doctor smoke run daemon tui runs cost build container-build container-up container-logs container-down
 
 UV ?= uv
 RUN := $(UV) run --locked
@@ -16,9 +16,14 @@ help:
 		'  make doctor  Validate .env without contacting providers' \
 		'  make smoke   Run an isolated offline simulation (no APIs/broker)' \
 		'  make run     Execute one cycle using .env (may call APIs/broker)' \
+		'  make daemon  Run the durable scheduler/workers/API in foreground' \
+		'  make tui     Connect the interactive terminal control client' \
 		'  make runs    Show recent journaled runs' \
 		'  make cost    Estimate steady-state API cost and portfolio drag' \
-		'  make build   Check the lockfile and build the package'
+		'  make build   Check the lockfile and build the package' \
+		'  make container-up    Build and start the isolated daemon' \
+		'  make container-logs  Follow daemon container logs' \
+		'  make container-down  Stop the daemon container'
 
 sync:
 	$(UV) sync --locked
@@ -38,6 +43,12 @@ smoke:
 run:
 	$(RUN) kta run
 
+daemon:
+	$(RUN) kta daemon
+
+tui:
+	$(RUN) kta tui
+
 runs:
 	$(RUN) kta runs
 
@@ -47,3 +58,15 @@ cost:
 build:
 	$(UV) lock --check
 	$(UV) build
+
+container-build:
+	docker compose -f compose.daemon.yml build
+
+container-up:
+	docker compose -f compose.daemon.yml up --build -d
+
+container-logs:
+	docker compose -f compose.daemon.yml logs -f trader
+
+container-down:
+	docker compose -f compose.daemon.yml down

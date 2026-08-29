@@ -86,6 +86,22 @@ class RiskEngineTests(unittest.TestCase):
         self.assertTrue(decision.approved)
         self.assertEqual(decision.approved_notional, Decimal("100.00"))
 
+    def test_deferred_execution_preserves_originating_run_exposure_limit(self):
+        proposal = intent("TEST4")
+
+        decision = self.engine.evaluate(
+            [proposal],
+            self.account,
+            [],
+            [],
+            now=NOW,
+            prior_run_new_exposure=Decimal("1600"),
+            prior_run_order_count=2,
+        )[0]
+
+        self.assertTrue(decision.approved)
+        self.assertEqual(decision.approved_notional, Decimal("200.00"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,29 @@ class CostEstimateTests(unittest.TestCase):
         self.assertGreater(Decimal(estimate["projected_paid_stack_monthly_usd"]), Decimal("1"))
         self.assertGreater(Decimal(estimate["projected_annual_portfolio_drag_pct"]), Decimal("0.4"))
 
+    def test_agentic_research_prices_each_bounded_turn_and_search(self):
+        with patch.dict(
+            os.environ,
+            {
+                "KTA_AGENTIC_RESEARCH_ENABLED": "true",
+                "KTA_AGENT_MODE": "openrouter",
+                "KTA_RESEARCH_MODE": "perplexity",
+                "KTA_AGENT_MAX_TURNS": "6",
+                "KTA_AGENT_MAX_RESEARCH_CALLS": "4",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env(Path("/path/that/does/not/exist"))
+
+        estimate = estimate_monthly_cost(settings)
+
+        self.assertTrue(estimate["assumptions"]["agentic_research_enabled"])
+        self.assertEqual(estimate["assumptions"]["director_turns_per_cycle_ceiling"], 6)
+        self.assertEqual(estimate["assumptions"]["research_requests_per_cycle_ceiling"], 4)
+        self.assertGreater(
+            Decimal(estimate["projected_paid_stack_monthly_usd"]), Decimal("0.20")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

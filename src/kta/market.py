@@ -23,6 +23,12 @@ class MarketDataProvider(ABC):
     def daily_bars(self, symbol: str, lookback: int) -> List[Bar]:
         raise NotImplementedError
 
+    def latest_price(self, symbol: str) -> Decimal:
+        bars = self.daily_bars(symbol, 1)
+        if not bars:
+            raise RuntimeError("No market price is available for {}".format(symbol))
+        return bars[-1].close
+
 
 class AlpacaMarketData(MarketDataProvider):
     def __init__(self, base_url: str, api_key: str, api_secret: str, feed: str = "iex"):
@@ -62,6 +68,18 @@ class AlpacaMarketData(MarketDataProvider):
             for item in payload.get("bars", [])
         ]
         return sorted(bars, key=lambda item: item.timestamp)[-lookback:]
+
+    def latest_price(self, symbol: str) -> Decimal:
+        payload = request_json(
+            "GET",
+            "{}/v2/stocks/{}/trades/latest".format(self.base_url, symbol.upper()),
+            headers=self.headers,
+            query={"feed": self.feed},
+        )
+        trade = payload.get("trade") or {}
+        if trade.get("p") is None:
+            raise RuntimeError("Alpaca returned no latest trade for {}".format(symbol))
+        return decimal(trade["p"])
 
 
 class SyntheticMarketData(MarketDataProvider):
@@ -110,4 +128,3 @@ class StaticMarketData(MarketDataProvider):
 
     def daily_bars(self, symbol: str, lookback: int) -> List[Bar]:
         return self.bars_by_symbol.get(symbol.upper(), [])[-lookback:]
-

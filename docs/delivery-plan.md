@@ -14,6 +14,18 @@
 
 Paper acceptance requires successful staged runs from `operations.md`; real credentials are intentionally not part of the repository.
 
+## Milestone 1.5 — event-driven daemon (implemented)
+
+- Single-container scheduler, price-trigger poller, leased SQLite job workers, and HTTP control plane.
+- Durable trade-suggestion queue with off-hours provisional review and market-open revalidation.
+- Authenticated price webhook plus typed, allowlisted agent-created triggers.
+- Bounded OpenRouter/Perplexity research tool loop with per-run usage accounting.
+- Interactive terminal control client and durable chat transcripts.
+- Docker Compose and single-replica Kubernetes deployment assets.
+
+Production acceptance still requires an Alpaca-data/paper soak test, container restart/lease recovery test,
+and review of the selected models' tool-call reliability.
+
 ## Milestone 2 — measurable self-improvement
 
 - Daily outcome marking and counterfactual tracking.

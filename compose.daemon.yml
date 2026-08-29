@@ -1,0 +1,21 @@
+services:
+  trader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      KTA_DAEMON_HOST: 0.0.0.0
+      KTA_DAEMON_PORT: 8787
+      KTA_DATABASE_PATH: /data/kta.db
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - kta-data:/data
+    stop_grace_period: 30s
+
+volumes:
+  kta-data:

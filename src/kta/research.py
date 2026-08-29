@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from hashlib import sha256
-from typing import List
+from typing import Any, Dict, List
 
 from .domain import ApiUsage, Evidence, Signal, SignalAction, decimal, utc_now
 from .http import request_json
@@ -34,7 +34,7 @@ class PerplexityResearch(ResearchProvider):
         self._usage.clear()
         return usage
 
-    def _usage_record(self, payload) -> ApiUsage:
+    def _usage_record(self, payload, operation: str = "research_batch") -> ApiUsage:
         raw_usage = payload.get("usage") or {}
         input_tokens = int(raw_usage.get("prompt_tokens", 0) or 0)
         output_tokens = int(raw_usage.get("completion_tokens", 0) or 0)
@@ -60,7 +60,7 @@ class PerplexityResearch(ResearchProvider):
             estimated = True
         return ApiUsage(
             service="perplexity",
-            operation="research_batch",
+            operation=operation,
             model=self.model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -69,6 +69,38 @@ class PerplexityResearch(ResearchProvider):
             estimated=estimated,
             metadata={"search_context_size": "low", "pricing_date": "2026-08-27"},
         )
+
+    def query(self, question: str, max_tokens: int = 1200) -> Dict[str, Any]:
+        payload = request_json(
+            "POST",
+            "https://api.perplexity.ai/chat/completions",
+            headers={"Authorization": "Bearer {}".format(self.api_key)},
+            body={
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a point-in-time financial research collector. Separate event, "
+                            "transaction, publication, and disclosure dates. Prefer primary sources, "
+                            "include URLs, and do not provide trade instructions."
+                        ),
+                    },
+                    {"role": "user", "content": question},
+                ],
+                "temperature": 0.1,
+                "max_tokens": max_tokens,
+                "web_search_options": {"search_context_size": "low"},
+            },
+            timeout=60,
+        )
+        self._usage.append(self._usage_record(payload, operation="agent_research_query"))
+        choices = payload.get("choices") or []
+        return {
+            "answer": choices[0].get("message", {}).get("content", "") if choices else "",
+            "citations": [str(item) for item in (payload.get("citations") or [])],
+            "model": self.model,
+        }
 
     def gather(self, signals: List[Signal]) -> List[Evidence]:
         entry_signals = [signal for signal in signals if signal.action == SignalAction.ENTER]

@@ -23,9 +23,13 @@ Change one boundary at a time so failures are attributable.
 
 ## Scheduling
 
-Run the bounded coordinator around 4:30 p.m. `America/New_York` on trading days. Use one external scheduler instance. Deterministic scanning is daily so held positions are not ignored, while entry LLM work and research are throttled by the configured seven-day decision cooldown.
+The daemon schedules its deduplicated scan around 4:30 p.m. `America/New_York` on weekdays. Do not also
+run an external `kta run` schedule against the same account and journal. Deterministic scanning is daily so
+held positions are not ignored, while entry LLM work and research are throttled by the configured seven-day
+decision cooldown.
 
-Do not keep scout, critic, or reviewer processes alive. They are request/response stages created only when the coordinator reaches a paid trigger. The reviewer is further limited to one material batch per seven days.
+The daemon workers remain alive, but scout, critic, director, and reviewer calls are request/response jobs,
+not autonomous model subprocesses consuming tokens while idle.
 
 The command returns nonzero when critical research, scout, critic, journal, or broker work fails. A
 post-decision learning-review failure is recorded as `learning_review_error` and returned as a warning,
@@ -55,4 +59,5 @@ For a compromised key, revoke it at the provider before investigating applicatio
 - No corporate-action reconciliation.
 - No Google Trends production adapter.
 - No options execution.
-- SQLite is suitable for one process; move the journal to PostgreSQL before multiple workers.
+- SQLite is suitable for one active container with internal worker threads; move the journal and jobs to
+  PostgreSQL before multiple pods or hosts.

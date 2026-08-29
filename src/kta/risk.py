@@ -33,13 +33,15 @@ class RiskEngine:
         positions: List[Position],
         existing_intent_ids: List[str],
         now: datetime,
+        prior_run_new_exposure: Decimal = Decimal("0"),
+        prior_run_order_count: int = 0,
     ) -> List[RiskDecision]:
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         positions_by_symbol: Dict[str, Position] = {position.symbol: position for position in positions}
         gross = sum((abs(position.market_value) for position in positions), Decimal("0"))
         reserved = Decimal("0")
-        approved_orders = 0
+        approved_orders = prior_run_order_count
         existing = set(existing_intent_ids)
         decisions: List[RiskDecision] = []
         for intent in sorted(intents, key=lambda item: (item.side != Side.SELL, -item.confidence)):
@@ -86,7 +88,11 @@ class RiskEngine:
             current_value = abs(positions_by_symbol.get(intent.symbol).market_value) if intent.symbol in positions_by_symbol else Decimal("0")
             symbol_room = (account.equity * self.policy.max_position_pct) - current_value
             gross_room = (account.equity * self.policy.max_gross_exposure_pct) - gross - reserved
-            run_room = (account.equity * self.policy.max_new_exposure_per_run_pct) - reserved
+            run_room = (
+                (account.equity * self.policy.max_new_exposure_per_run_pct)
+                - prior_run_new_exposure
+                - reserved
+            )
             cash_room = account.cash - reserved
             notional = min(requested, symbol_room, gross_room, run_room, cash_room)
             notional = max(Decimal("0"), notional).quantize(Decimal("0.01"))

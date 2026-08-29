@@ -57,8 +57,23 @@ def estimate_monthly_cost(
         settings.estimated_llm_input_usd_per_million,
         settings.estimated_llm_output_usd_per_million,
     )
-    research = _research_cost(settings.perplexity_model)
-    llm_subtotal = (decision_llm * Decimal(cycles)) + (reviewer_llm * Decimal(review_count))
+    research_requests_per_cycle = (
+        settings.agent_max_research_calls if settings.agentic_research_enabled else 1
+    )
+    director_llm = Decimal("0")
+    if settings.agentic_research_enabled:
+        # Conservative ceiling: context can grow each turn; each turn has a 1,200-token output cap.
+        director_llm = _token_cost(
+            5000 * settings.agent_max_turns,
+            1200 * settings.agent_max_turns,
+            settings.estimated_llm_input_usd_per_million,
+            settings.estimated_llm_output_usd_per_million,
+        )
+    research = _research_cost(settings.perplexity_model) * Decimal(research_requests_per_cycle)
+    llm_subtotal = (
+        ((decision_llm + director_llm) * Decimal(cycles))
+        + (reviewer_llm * Decimal(review_count))
+    )
     openrouter_fee = llm_subtotal * settings.openrouter_credit_fee_pct
     research_subtotal = research * Decimal(cycles)
     paid_stack_monthly = llm_subtotal + openrouter_fee + research_subtotal
@@ -79,12 +94,20 @@ def estimate_monthly_cost(
             "candidates_are_batched_per_cycle": True,
             "decision_tokens_per_cycle": {"input": 7500, "output_ceiling": 2800},
             "review_tokens_per_batch": {"input": 6000, "output_ceiling": 1800},
+            "agentic_research_enabled": settings.agentic_research_enabled,
+            "director_turns_per_cycle_ceiling": (
+                settings.agent_max_turns if settings.agentic_research_enabled else 0
+            ),
+            "director_tokens_per_turn_ceiling": {"input": 5000, "output": 1200},
+            "research_requests_per_cycle_ceiling": research_requests_per_cycle,
             "llm_input_usd_per_million": str(settings.estimated_llm_input_usd_per_million),
             "llm_output_usd_per_million": str(settings.estimated_llm_output_usd_per_million),
             "perplexity_model": settings.perplexity_model,
             "portfolio_usd": str(portfolio),
         },
-        "per_signal_cycle_usd": str((decision_llm + research).quantize(Decimal("0.000001"))),
+        "per_signal_cycle_usd": str(
+            (decision_llm + director_llm + research).quantize(Decimal("0.000001"))
+        ),
         "per_review_batch_usd": str(reviewer_llm.quantize(Decimal("0.000001"))),
         "projected_paid_stack_monthly_usd": str(paid_stack_monthly.quantize(Decimal("0.0001"))),
         "projected_paid_stack_annual_usd": str(paid_stack_annual.quantize(Decimal("0.01"))),

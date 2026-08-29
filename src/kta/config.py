@@ -67,6 +67,20 @@ class Settings:
     daily_loss_kill_pct: Decimal
     options_enabled: bool
     shorting_enabled: bool
+    daemon_host: str
+    daemon_port: int
+    control_token: Optional[str]
+    daemon_workers: int
+    job_poll_seconds: int
+    job_lease_seconds: int
+    trigger_poll_seconds: int
+    daily_scan_hour_et: int
+    daily_scan_minute_et: int
+    scan_on_start: bool
+    agentic_research_enabled: bool
+    agent_max_turns: int
+    agent_max_research_calls: int
+    suggestion_review_ttl_minutes: int
 
     @classmethod
     def from_env(cls, env_file: Optional[Path] = None) -> "Settings":
@@ -120,6 +134,20 @@ class Settings:
             daily_loss_kill_pct=decimal(get("KTA_DAILY_LOSS_KILL_PCT", "0.20")),
             options_enabled=_bool(get("KTA_OPTIONS_ENABLED", "false")),
             shorting_enabled=_bool(get("KTA_SHORTING_ENABLED", "false")),
+            daemon_host=get("KTA_DAEMON_HOST", "127.0.0.1"),
+            daemon_port=int(get("KTA_DAEMON_PORT", "8787")),
+            control_token=get("KTA_CONTROL_TOKEN"),
+            daemon_workers=int(get("KTA_DAEMON_WORKERS", "1")),
+            job_poll_seconds=int(get("KTA_JOB_POLL_SECONDS", "2")),
+            job_lease_seconds=int(get("KTA_JOB_LEASE_SECONDS", "1800")),
+            trigger_poll_seconds=int(get("KTA_TRIGGER_POLL_SECONDS", "30")),
+            daily_scan_hour_et=int(get("KTA_DAILY_SCAN_HOUR_ET", "16")),
+            daily_scan_minute_et=int(get("KTA_DAILY_SCAN_MINUTE_ET", "30")),
+            scan_on_start=_bool(get("KTA_SCAN_ON_START", "false")),
+            agentic_research_enabled=_bool(get("KTA_AGENTIC_RESEARCH_ENABLED", "false")),
+            agent_max_turns=int(get("KTA_AGENT_MAX_TURNS", "6")),
+            agent_max_research_calls=int(get("KTA_AGENT_MAX_RESEARCH_CALLS", "4")),
+            suggestion_review_ttl_minutes=int(get("KTA_SUGGESTION_REVIEW_TTL_MINUTES", "15")),
         )
 
     def validate(self) -> List[str]:
@@ -164,6 +192,26 @@ class Settings:
             errors.append("Options execution is modeled but not implemented in this release")
         if self.shorting_enabled:
             errors.append("Short execution is not implemented in this release")
+        if self.daemon_host not in {"127.0.0.1", "localhost", "::1"} and not self.control_token:
+            errors.append("KTA_CONTROL_TOKEN is required when the daemon listens beyond loopback")
+        if self.daemon_port < 1 or self.daemon_port > 65535:
+            errors.append("KTA_DAEMON_PORT must be between 1 and 65535")
+        if self.daemon_workers < 1 or self.daemon_workers > 8:
+            errors.append("KTA_DAEMON_WORKERS must be between 1 and 8")
+        if self.job_poll_seconds < 1 or self.job_lease_seconds < 30 or self.trigger_poll_seconds < 5:
+            errors.append("Daemon poll intervals or job lease are below their safe minimum")
+        if not 0 <= self.daily_scan_hour_et <= 23 or not 0 <= self.daily_scan_minute_et <= 59:
+            errors.append("Daily scan hour/minute must describe a valid Eastern time")
+        if self.agent_max_turns < 1 or self.agent_max_turns > 12:
+            errors.append("KTA_AGENT_MAX_TURNS must be between 1 and 12")
+        if self.agent_max_research_calls < 0 or self.agent_max_research_calls > 8:
+            errors.append("KTA_AGENT_MAX_RESEARCH_CALLS must be between 0 and 8")
+        if self.suggestion_review_ttl_minutes < 1 or self.suggestion_review_ttl_minutes > 60:
+            errors.append("KTA_SUGGESTION_REVIEW_TTL_MINUTES must be between 1 and 60")
+        if self.agentic_research_enabled and self.agent_mode != "openrouter":
+            errors.append("Agentic research requires KTA_AGENT_MODE=openrouter")
+        if self.agentic_research_enabled and self.research_mode != "perplexity":
+            errors.append("Agentic research requires KTA_RESEARCH_MODE=perplexity")
         if self.review_min_interval_hours < 0:
             errors.append("KTA_REVIEW_MIN_INTERVAL_HOURS cannot be negative")
         if self.decision_cooldown_hours < 1:
@@ -207,4 +255,16 @@ class Settings:
             "monthly_api_budget_usd": str(self.monthly_api_budget_usd),
             "options_enabled": self.options_enabled,
             "shorting_enabled": self.shorting_enabled,
+            "daemon_host": self.daemon_host,
+            "daemon_port": self.daemon_port,
+            "daemon_workers": self.daemon_workers,
+            "control_token_present": bool(self.control_token),
+            "daily_scan_time_et": "{:02d}:{:02d}".format(
+                self.daily_scan_hour_et, self.daily_scan_minute_et
+            ),
+            "scan_on_start": self.scan_on_start,
+            "agentic_research_enabled": self.agentic_research_enabled,
+            "agent_max_turns": self.agent_max_turns,
+            "agent_max_research_calls": self.agent_max_research_calls,
+            "suggestion_review_ttl_minutes": self.suggestion_review_ttl_minutes,
         }

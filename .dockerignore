@@ -1,0 +1,14 @@
+.git
+.env
+.venv
+.idea
+__pycache__
+*.pyc
+dist
+build
+var
+kta
+tests
+docs
+example.png
+keathley-bot.pine

@@ -48,6 +48,16 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(any("Options" in error for error in errors))
         self.assertTrue(any("Short" in error for error in errors))
 
+    def test_non_loopback_daemon_requires_control_token(self):
+        with patch.dict(
+            os.environ,
+            {"KTA_UNIVERSE": "TEST1", "KTA_DAEMON_HOST": "0.0.0.0"},
+            clear=True,
+        ):
+            settings = Settings.from_env(Path("/path/that/does/not/exist"))
+
+        self.assertTrue(any("KTA_CONTROL_TOKEN" in error for error in settings.validate()))
+
 
 if __name__ == "__main__":
     unittest.main()

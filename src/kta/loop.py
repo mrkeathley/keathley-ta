@@ -38,6 +38,7 @@ class TradingLoop:
         review_min_interval_hours: int = 168,
         monthly_api_budget_usd: Decimal = Decimal("2.00"),
         paid_api_enabled: bool = False,
+        defer_execution: bool = False,
         progress: Optional[Callable[[str], None]] = None,
         clock=None,
     ):
@@ -54,6 +55,7 @@ class TradingLoop:
         self.review_min_interval_hours = review_min_interval_hours
         self.monthly_api_budget_usd = monthly_api_budget_usd
         self.paid_api_enabled = paid_api_enabled
+        self.defer_execution = defer_execution
         self.progress = progress or (lambda message: None)
         self.clock = clock or utc_now
 
@@ -73,7 +75,7 @@ class TradingLoop:
                 total += usage.cost_usd
         return total
 
-    def run(self, universe: List[str]) -> RunResult:
+    def run(self, universe: List[str], trigger_context: Optional[str] = None) -> RunResult:
         run_id = self.journal.start_run(self.mode, self.safe_config)
         signal_count = 0
         proposed_count = 0
@@ -171,6 +173,8 @@ class TradingLoop:
                 trigger_identity = "{}|{}|{}".format(
                     signal.symbol, signal.strategy_version, signal.action.value
                 )
+                if trigger_context:
+                    trigger_identity += "|{}".format(trigger_context)
                 trigger_key = sha256(trigger_identity.encode("utf-8")).hexdigest()[:32]
                 if self.journal.claim_decision_trigger(
                     run_id,
@@ -186,7 +190,12 @@ class TradingLoop:
                     self.journal.event(
                         run_id,
                         "decision_trigger_claimed",
-                        {"trigger_key": trigger_key, "symbol": signal.symbol, "action": signal.action},
+                        {
+                            "trigger_key": trigger_key,
+                            "symbol": signal.symbol,
+                            "action": signal.action,
+                            "context": trigger_context,
+                        },
                     )
                 else:
                     self.journal.event(
@@ -214,6 +223,54 @@ class TradingLoop:
             proposed_count = len(intents)
             for intent in intents:
                 self.journal.event(run_id, "intent_proposed", intent)
+
+            if self.defer_execution:
+                self._status("Queueing {} trade suggestion(s) for independent review".format(len(intents)))
+                for intent in intents:
+                    suggestion_id = self.journal.create_trade_suggestion(
+                        run_id,
+                        intent.intent_id,
+                        intent.symbol,
+                        intent.side.value,
+                        {"intent": intent, "signals": signals, "evidence": evidence},
+                    )
+                    suggestion = self.journal.trade_suggestion(suggestion_id)
+                    if suggestion and suggestion["status"] == "executed":
+                        self.journal.event(
+                            run_id,
+                            "trade_suggestion_duplicate_blocked",
+                            {"suggestion_id": suggestion_id, "intent_id": intent.intent_id},
+                        )
+                        continue
+                    self.journal.enqueue_job(
+                        "review_suggestion",
+                        {"suggestion_id": suggestion_id, "revalidate": False},
+                        priority=100 if intent.side.value == "sell" else 50,
+                        dedupe_key="suggestion-review:{}:initial:{}".format(
+                            suggestion_id, run_id
+                        ),
+                    )
+                    self.journal.event(
+                        run_id,
+                        "trade_suggestion_queued",
+                        {"suggestion_id": suggestion_id, "intent_id": intent.intent_id},
+                    )
+                for trigger_key in list(pending_trigger_keys):
+                    self.journal.finish_decision_trigger(trigger_key, evaluation_time, success=True)
+                    pending_trigger_keys.remove(trigger_key)
+                self._status("Finalizing audit journal")
+                self.journal.finish_run(run_id, RunStatus.COMPLETE)
+                return RunResult(
+                    run_id=run_id,
+                    status=RunStatus.COMPLETE,
+                    signal_count=signal_count,
+                    proposed_count=proposed_count,
+                    approved_count=0,
+                    submitted_count=0,
+                    review=None,
+                    api_cost_usd=api_cost_usd,
+                    errors=errors,
+                )
 
             self._status("Critic reviewing {} proposed intent(s)".format(len(intents)))
             critic_decisions = self.agents.criticize(intents, signals, evidence)

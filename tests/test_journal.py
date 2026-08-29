@@ -92,6 +92,27 @@ class JournalTests(unittest.TestCase):
                 )
             )
 
+    def test_durable_job_claim_completion_and_deduplication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Journal(Path(directory) / "journal.db")
+            first = journal.enqueue_job(
+                "scan", {"symbols": ["TEST1"]}, dedupe_key="daily:2026-08-28"
+            )
+            duplicate = journal.enqueue_job(
+                "scan", {"symbols": ["TEST2"]}, dedupe_key="daily:2026-08-28"
+            )
+
+            self.assertEqual(first, duplicate)
+            claimed = journal.claim_job("worker-one", lease_seconds=60)
+            self.assertEqual(claimed["job_id"], first)
+            self.assertEqual(claimed["payload"], {"symbols": ["TEST1"]})
+            self.assertEqual(claimed["attempts"], 1)
+
+            journal.finish_job(first, {"run_id": "run-one"})
+
+            self.assertEqual(journal.job_counts(), {"complete": 1})
+            self.assertEqual(journal.recent_jobs(1)[0]["result"], {"run_id": "run-one"})
+
 
 if __name__ == "__main__":
     unittest.main()

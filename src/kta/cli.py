@@ -2,23 +2,21 @@
 
 import argparse
 import json
+import logging
 import tempfile
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
 
-from .agents import HeuristicAgentSuite, OpenRouterAgentSuite
-from .brokers import AlpacaPaperBroker, SimulatedBroker
 from .config import Settings
 from .costs import estimate_monthly_cost
 from .domain import RunStatus, jsonable
 from .journal import Journal
-from .loop import TradingLoop
-from .market import AlpacaMarketData, SyntheticMarketData
 from .progress import ProgressReporter
-from .research import NoResearch, PerplexityResearch
-from .risk import RiskEngine, RiskPolicy
+from .runtime import build_loop
+from .service import DaemonService
+from .tui import run_tui
 
 
 def _json(value: object) -> str:
@@ -29,66 +27,8 @@ def _settings() -> Settings:
     return Settings.from_env(Path(".env"))
 
 
-def _build(settings: Settings, progress=None) -> TradingLoop:
-    journal = Journal(settings.database_path)
-    if settings.market_data_mode == "alpaca":
-        market = AlpacaMarketData(
-            settings.alpaca_data_url,
-            settings.alpaca_api_key or "",
-            settings.alpaca_api_secret or "",
-            settings.alpaca_data_feed,
-        )
-    else:
-        market = SyntheticMarketData()
-    if settings.broker_mode == "paper":
-        broker = AlpacaPaperBroker(
-            settings.alpaca_trading_url,
-            settings.alpaca_api_key or "",
-            settings.alpaca_api_secret or "",
-        )
-    else:
-        broker = SimulatedBroker(settings.initial_simulated_cash)
-    if settings.research_mode == "perplexity":
-        research = PerplexityResearch(settings.perplexity_api_key or "", settings.perplexity_model)
-    else:
-        research = NoResearch()
-    if settings.agent_mode == "openrouter":
-        agents = OpenRouterAgentSuite(
-            settings.openrouter_api_key or "",
-            settings.scout_model or "",
-            settings.critic_model or "",
-            settings.reviewer_model or "",
-            settings.openrouter_reasoning_effort,
-        )
-    else:
-        agents = HeuristicAgentSuite()
-    policy = RiskPolicy(
-        max_position_pct=settings.max_position_pct,
-        max_gross_exposure_pct=settings.max_gross_exposure_pct,
-        max_new_exposure_per_run_pct=settings.max_new_exposure_per_run_pct,
-        max_orders_per_run=settings.max_orders_per_run,
-        max_data_age_days=settings.max_data_age_days,
-        minimum_confidence=settings.minimum_confidence,
-        minimum_order_notional=settings.minimum_order_notional,
-        daily_loss_kill_pct=settings.daily_loss_kill_pct,
-        options_enabled=settings.options_enabled,
-        shorting_enabled=settings.shorting_enabled,
-    )
-    return TradingLoop(
-        market_data=market,
-        research=research,
-        agents=agents,
-        risk=RiskEngine(policy),
-        broker=broker,
-        journal=journal,
-        mode=settings.broker_mode,
-        safe_config=settings.safe_dict(),
-        decision_cooldown_hours=settings.decision_cooldown_hours,
-        review_min_interval_hours=settings.review_min_interval_hours,
-        monthly_api_budget_usd=settings.monthly_api_budget_usd,
-        paid_api_enabled=(settings.agent_mode == "openrouter" or settings.research_mode == "perplexity"),
-        progress=progress,
-    )
+def _build(settings: Settings, progress=None):
+    return build_loop(settings, progress=progress)
 
 
 def _validate(settings: Settings) -> bool:
@@ -149,6 +89,7 @@ def command_smoke(settings: Settings, quiet: bool = False) -> int:
             universe=["SYNTH1", "SYNTH2", "SYNTH3"],
             options_enabled=False,
             shorting_enabled=False,
+            agentic_research_enabled=False,
         )
         return command_run(smoke_settings, universe=None, quiet=quiet)
 
@@ -174,6 +115,47 @@ def command_estimate_cost(
     return 0
 
 
+def command_daemon(settings: Settings) -> int:
+    if not _validate(settings):
+        return 2
+    from .api import serve_control_api
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    print(
+        "KTA daemon listening on http://{}:{} (control token: {})".format(
+            settings.daemon_host,
+            settings.daemon_port,
+            "configured" if settings.control_token else "not configured",
+        ),
+        flush=True,
+    )
+    try:
+        serve_control_api(DaemonService(settings))
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
+def command_tui(
+    settings: Settings,
+    url: Optional[str],
+    token: Optional[str],
+    conversation: Optional[str],
+    message: Optional[str],
+) -> int:
+    run_tui(
+        url or "http://{}:{}".format(settings.daemon_host, settings.daemon_port),
+        token or settings.control_token,
+        conversation_id=conversation,
+        message=message,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kta", description="Auditable agentic trading experiment")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -185,6 +167,12 @@ def build_parser() -> argparse.ArgumentParser:
         "smoke", help="run an isolated offline simulation; never calls configured APIs or brokers"
     )
     smoke_parser.add_argument("--quiet", action="store_true", help="suppress stderr progress output")
+    subparsers.add_parser("daemon", help="run the durable scheduler, workers, and HTTP control plane")
+    tui_parser = subparsers.add_parser("tui", help="connect an interactive terminal client to the daemon")
+    tui_parser.add_argument("--url", help="daemon base URL")
+    tui_parser.add_argument("--token", help="control-plane bearer token; defaults to KTA_CONTROL_TOKEN")
+    tui_parser.add_argument("--conversation", help="conversation ID to resume")
+    tui_parser.add_argument("--message", help="send one message and exit after the response")
     runs_parser = subparsers.add_parser("runs", help="show recent journaled runs")
     runs_parser.add_argument("--limit", type=int, default=20)
     events_parser = subparsers.add_parser("events", help="show the complete audit trail for a run")
@@ -205,6 +193,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         status = command_run(settings, args.universe, args.quiet)
     elif args.command == "smoke":
         status = command_smoke(settings, args.quiet)
+    elif args.command == "daemon":
+        status = command_daemon(settings)
+    elif args.command == "tui":
+        status = command_tui(settings, args.url, args.token, args.conversation, args.message)
     elif args.command == "runs":
         status = command_runs(settings, args.limit)
     elif args.command == "events":
